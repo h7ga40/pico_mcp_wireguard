@@ -35,7 +35,13 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(pico_mcp pico_mcp.c )
+add_executable(pico_mcp 
+    pico_mcp.c
+    llhttp/llhttp.c
+    llhttp/api.c
+    llhttp/http.c
+    parson/parson.c
+)
 
 pico_set_program_name(pico_mcp "pico_mcp")
 pico_set_program_version(pico_mcp "0.1")
@@ -51,6 +57,8 @@ target_link_libraries(pico_mcp
 # Add the standard include files to the build
 target_include_directories(pico_mcp PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/llhttp
+        ${CMAKE_CURRENT_LIST_DIR}/parson
 )
 
 # Add any user requested libraries
