@@ -15,6 +15,9 @@ static int on_url(llhttp_t *parser, const char *at, size_t length)
 	url = strndup(at, length);
 }
 
+static int on_body(llhttp_t *parser, const char *at, size_t length);
+static int on_message_complete(llhttp_t *parser);
+
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
 	if (!p)
@@ -29,6 +32,8 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t
 	llhttp_settings_t settings;
 	llhttp_settings_init(&settings);
 	settings.on_url = on_url;
+    settings.on_body = on_body;
+    settings.on_message_complete = on_message_complete;
 
 	// パースしてURIを見る
 	llhttp_init(&parser, HTTP_REQUEST, &settings);
@@ -127,7 +132,30 @@ void handle_call(JSON_Object *params, int id)
 	}
 }
 
-int test(const char *requests)
+char *requests = NULL;
+
+static int on_body(llhttp_t *parser, const char *at, size_t length)
+{
+    if (requests) {
+        char *new_requests = realloc((void *)requests, strlen(requests) + length + 1);
+        if (!new_requests) {
+            return -1; // メモリ不足
+        }
+        requests = new_requests;
+    } else {
+        requests = malloc(length + 1);
+        if (!requests) {
+            return -1; // メモリ不足
+        }
+    }
+
+    strncat((char *)requests, at, length);
+    requests[strlen(requests)] = '\0'; // Null-terminate
+
+    return 0;
+}
+
+static int on_message_complete(llhttp_t *parser)
 {
 	JSON_Value *val = json_parse_string(requests);
 	if (!val)
@@ -152,14 +180,6 @@ int test(const char *requests)
 
 	return 0;
 }
-
-// JSON-RPC リクエスト（1: set_context, 2: call）
-const char *requests[] = {
-	// リクエスト1: context 設定
-	"{ \"jsonrpc\": \"2.0\", \"method\": \"mcp.set_context\", \"params\": { \"context\": { \"switch_servers\": { \"servers\": [ { \"location\": \"kitchen\", \"url\": \"http://192.168.1.101:8080\" } ] } } }, \"id\": 1 }",
-	// リクエスト2: 実行
-	"{ \"jsonrpc\": \"2.0\", \"method\": \"mcp.call\", \"params\": { \"function\": \"switch_control.set_state\", \"switch_id\": \"main_light\", \"state\": \"on\", \"location\": \"kitchen\" }, \"id\": 2 }"
-};
 
 int main()
 {
@@ -189,11 +209,7 @@ int main()
 	http_server_init();
 	printf("HTTP server initialized.\n");
 
-	int i = 0;
 	while (true) {
-		test(requests[i]);
-		i = i + 1 % 2;
-
 		sleep_ms(1000);
 	}
 }
