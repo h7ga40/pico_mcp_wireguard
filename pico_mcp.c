@@ -7,7 +7,14 @@
 #include "parson.h"
 
 static struct tcp_pcb *sse_pcb = NULL;
-const char *url = NULL;
+static const char *url = NULL;
+static bool led_on = false;
+
+static void switch_led(const char *val)
+{
+    led_on = (strcmp(val, "ON") == 0) ? true : false;
+    cyw43_gpio_set(&cyw43_state, 0, led_on);
+}
 
 static int on_url(llhttp_t *parser, const char *at, size_t length)
 {
