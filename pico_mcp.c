@@ -130,9 +130,10 @@ void handle_call(JSON_Object *params, int id)
 		return;
 	}
 
-	if (strcmp(loc, context.location) == 0) {
-		printf("{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n",
-			context.url, switch_id, state, id);
+        if (strcmp(loc, context.location) == 0) {
+                switch_led(state);
+                printf("{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n",
+                        context.url, switch_id, state, id);
 	}
 	else {
 		printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}\n", id);
