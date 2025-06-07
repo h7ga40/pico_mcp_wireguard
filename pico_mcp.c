@@ -12,8 +12,8 @@ static bool led_on = false;
 
 static void switch_led(const char *val)
 {
-    led_on = (strcmp(val, "ON") == 0) ? true : false;
-    cyw43_gpio_set(&cyw43_state, 0, led_on);
+	led_on = (strcmp(val, "ON") == 0) ? true : false;
+	cyw43_gpio_set(&cyw43_state, 0, led_on);
 }
 
 static int on_url(llhttp_t *parser, const char *at, size_t length)
@@ -39,8 +39,8 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t
 	llhttp_settings_t settings;
 	llhttp_settings_init(&settings);
 	settings.on_url = on_url;
-    settings.on_body = on_body;
-    settings.on_message_complete = on_message_complete;
+	settings.on_body = on_body;
+	settings.on_message_complete = on_message_complete;
 
 	// パースしてURIを見る
 	llhttp_init(&parser, HTTP_REQUEST, &settings);
@@ -130,10 +130,10 @@ void handle_call(JSON_Object *params, int id)
 		return;
 	}
 
-        if (strcmp(loc, context.location) == 0) {
-                switch_led(state);
-                printf("{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n",
-                        context.url, switch_id, state, id);
+	if (strcmp(loc, context.location) == 0) {
+		switch_led(state);
+		printf("{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n",
+			context.url, switch_id, state, id);
 	}
 	else {
 		printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}\n", id);
@@ -144,23 +144,24 @@ char *requests = NULL;
 
 static int on_body(llhttp_t *parser, const char *at, size_t length)
 {
-    if (requests) {
-        char *new_requests = realloc((void *)requests, strlen(requests) + length + 1);
-        if (!new_requests) {
-            return -1; // メモリ不足
-        }
-        requests = new_requests;
-    } else {
-        requests = malloc(length + 1);
-        if (!requests) {
-            return -1; // メモリ不足
-        }
-    }
+	if (requests) {
+		char *new_requests = realloc((void *)requests, strlen(requests) + length + 1);
+		if (!new_requests) {
+			return -1; // メモリ不足
+		}
+		requests = new_requests;
+	}
+	else {
+		requests = malloc(length + 1);
+		if (!requests) {
+			return -1; // メモリ不足
+		}
+	}
 
-    strncat((char *)requests, at, length);
-    requests[strlen(requests)] = '\0'; // Null-terminate
+	strncat((char *)requests, at, length);
+	requests[strlen(requests)] = '\0'; // Null-terminate
 
-    return 0;
+	return 0;
 }
 
 static int on_message_complete(llhttp_t *parser)
