@@ -132,6 +132,14 @@ int response_printf(const char *format, ...)
 	return len;
 }
 
+const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
+const char invalid_request[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}";
+const char method_not_found[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
+const char unknown_tool[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Unknown tool\"}}";
+
+const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
+const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"inputSchema\":{\"title\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"inputSchema\":{\"title\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
+
 // コンテキスト保持（簡易構造体）
 typedef struct
 {
@@ -145,7 +153,7 @@ void handle_set_context(JSON_Object *params, int id)
 {
 	JSON_Object *ctx = json_object_get_object(params, "context");
 	if (!ctx) {
-		printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid context\"}, \"id\": %d}\n", id);
+		response_printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid context\"}, \"id\": %d}\n", id);
 		return;
 	}
 
@@ -157,10 +165,10 @@ void handle_set_context(JSON_Object *params, int id)
 		strncpy(context.location, loc, sizeof(context.location));
 		strncpy(context.url, url, sizeof(context.url));
 
-		printf("{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n", id);
+		response_printf("{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n", id);
 	}
 	else {
-		printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing fields\"}, \"id\": %d}\n", id);
+		response_printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing fields\"}, \"id\": %d}\n", id);
 	}
 }
 
@@ -171,17 +179,17 @@ void handle_call(JSON_Object *params, int id)
 	const char *state = json_object_get_string(params, "state");
 
 	if (!loc || !switch_id || !state) {
-		printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing call arguments\"}, \"id\": %d}\n", id);
+		response_printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing call arguments\"}, \"id\": %d}\n", id);
 		return;
 	}
 
 	if (strcmp(loc, context.location) == 0) {
 		switch_led(state);
-		printf("{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n",
+		response_printf("{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n",
 			context.url, switch_id, state, id);
 	}
 	else {
-		printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}\n", id);
+		response_printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}\n", id);
 	}
 }
 
@@ -209,14 +217,6 @@ static int on_body(llhttp_t *parser, const char *at, size_t length)
 	return 0;
 }
 
-const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
-const char invalid_request[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}";
-const char method_not_found[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
-const char unknown_tool[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Unknown tool\"}}";
-
-const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
-const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"inputSchema\":{\"title\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"inputSchema\":{\"title\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
-
 static int on_message_complete(llhttp_t *parser)
 {
 	JSON_Value *val = json_parse_string(requests);
@@ -230,6 +230,8 @@ static int on_message_complete(llhttp_t *parser)
 	const char *method = json_object_get_string(obj, "method");
 	int id = (int)json_object_get_number(obj, "id");
 	JSON_Object *params = json_object_get_object(obj, "params");
+	const char *name = json_object_get_string(params, "name");
+	JSON_Object *arguments = json_object_get_object(obj, "arguments");
 
 	if (strcmp(method, "initialize") == 0) {
 		response_printf(resource, id);
@@ -237,11 +239,13 @@ static int on_message_complete(llhttp_t *parser)
 	else if (strcmp(method, "tools/list") == 0) {
 		response_printf(tool_list, id);
 	}
-	else if (strcmp(method, "mcp.set_context") == 0) {
-		handle_set_context(params, id);
-	}
-	else if (strcmp(method, "mcp.call") == 0) {
-		handle_call(params, id);
+	else if (strcmp(method, "tools/call") == 0 && name != NULL) {
+		if (strcmp(name, "mcp.set_context") == 0) {
+			handle_set_context(arguments, id);
+		}
+		else if (strcmp(name, "mcp.call") == 0) {
+			handle_call(arguments, id);
+		}
 	}
 	else {
 		response_printf(method_not_found, id);
