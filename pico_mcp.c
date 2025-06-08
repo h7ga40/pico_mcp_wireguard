@@ -143,6 +143,13 @@ const char invalid_protocol[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"cod
 const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
 const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"inputSchema\":{\"title\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"inputSchema\":{\"title\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
 
+const char invalid_context[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid context\"}, \"id\": %d}\n";
+const char status_ok[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n";
+const char missing_fields[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing fields\"}, \"id\": %d}\n";
+const char missing_call_arguments[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing call arguments\"}, \"id\": %d}\n";
+const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n";
+const char location_not_configured[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}\n";
+
 // コンテキスト保持（簡易構造体）
 typedef struct
 {
@@ -156,7 +163,7 @@ void handle_set_context(JSON_Object *params, int id)
 {
 	JSON_Object *ctx = json_object_get_object(params, "context");
 	if (!ctx) {
-		response_printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid context\"}, \"id\": %d}\n", id);
+               response_printf(invalid_context, id);
 		return;
 	}
 
@@ -168,10 +175,10 @@ void handle_set_context(JSON_Object *params, int id)
 		strncpy(context.location, loc, sizeof(context.location));
 		strncpy(context.url, url, sizeof(context.url));
 
-		response_printf("{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n", id);
+               response_printf(status_ok, id);
 	}
 	else {
-		response_printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing fields\"}, \"id\": %d}\n", id);
+               response_printf(missing_fields, id);
 	}
 }
 
@@ -182,17 +189,16 @@ void handle_call(JSON_Object *params, int id)
 	const char *state = json_object_get_string(params, "state");
 
 	if (!loc || !switch_id || !state) {
-		response_printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing call arguments\"}, \"id\": %d}\n", id);
+               response_printf(missing_call_arguments, id);
 		return;
 	}
 
 	if (strcmp(loc, context.location) == 0) {
 		switch_led(state);
-		response_printf("{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n",
-			context.url, switch_id, state, id);
+               response_printf(call_success, context.url, switch_id, state, id);
 	}
 	else {
-		response_printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}\n", id);
+               response_printf(location_not_configured, id);
 	}
 }
 
