@@ -1,5 +1,9 @@
+#include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
+#include <stdlib.h>
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/tcp.h"
@@ -14,13 +18,25 @@ enum endpoint_type {
 	ENDPOINT_NOT_FOUND
 };
 
-enum endpoint_type endpoint_type = ENDPOINT_NONE;
+typedef struct session_info {
+	llhttp_t parser;
+	llhttp_settings_t settings;
+	char *url;
+	char *query;
+	enum endpoint_type endpoint_type;
+	char *request;
+	char *response;
+} session_info_t;
+
 static struct tcp_pcb *sse_pcb = NULL;
-static llhttp_t parser;
 static const char empty_string[] = "";
-static char *response = NULL;
 static int response_id = 1;
 static bool led_on = false;
+
+static int on_url(llhttp_t *parser, const char *at, size_t length);
+static int on_url_complete(llhttp_t *parser);
+static int on_body(llhttp_t *parser, const char *at, size_t length);
+static int on_message_complete(llhttp_t *parser);
 
 static void switch_led(const char *val)
 {
@@ -28,59 +44,53 @@ static void switch_led(const char *val)
 	cyw43_gpio_set(&cyw43_state, 0, led_on);
 }
 
-static int on_url(llhttp_t *parser, const char *url, size_t length)
+void session_info_free(session_info_t *info)
 {
-	if (strcmp(url, "/sse") == 0) {
-		endpoint_type = ENDPOINT_SSE;
-	}
-	else if (strcmp(url, "/message") == 0 && sse_pcb) {
-		endpoint_type = ENDPOINT_MESSAGE;
-	}
-	else if (strcmp(url, "/event") == 0 && sse_pcb) {
-		endpoint_type = ENDPOINT_EVENT;
-	}
-	else {
-		endpoint_type = ENDPOINT_NOT_FOUND;
-	}
-	return 0; // 成功
+	free(info->url);
+	free(info->request);
+	free(info->response);
+	free(info);
 }
-
-static int on_body(llhttp_t *parser, const char *at, size_t length);
-static int on_message_complete(llhttp_t *parser);
 
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, err_t err)
 {
-	if (!pbuf)
+	session_info_t *info = (session_info_t *)arg;
+	llhttp_t *parser = &info->parser;
+	if (pbuf == NULL) {
+		session_info_free(info);
+		tcp_arg(tpcb, NULL);
+		tcp_close(tpcb);
 		return ERR_OK;
+	}
 
 	// HTTPリクエストのパース
 	for (struct pbuf *p = pbuf; p != NULL; p = p->next) {
-		llhttp_execute(&parser, p->payload, p->len);
+		llhttp_execute(parser, p->payload, p->len);
 	}
 	pbuf_free(pbuf);
 
-	switch (endpoint_type) {
+	switch (info->endpoint_type) {
 	case ENDPOINT_SSE:
 		sse_pcb = tpcb; // SSE用のPCBを保存
-		endpoint_type = ENDPOINT_NONE; // リセット
+		info->endpoint_type = ENDPOINT_NONE; // リセット
 		break;
 	case ENDPOINT_MESSAGE:
 	case ENDPOINT_EVENT:
-		endpoint_type = ENDPOINT_NONE; // リセット
+		info->endpoint_type = ENDPOINT_NONE; // リセット
 		break;
 	case ENDPOINT_NOT_FOUND: {
 		const char *res404 = "HTTP/1.1 404 Not Found\r\n\r\n";
 		tcp_write(tpcb, res404, strlen(res404), TCP_WRITE_FLAG_COPY);
-		endpoint_type = ENDPOINT_NONE; // リセット
+		info->endpoint_type = ENDPOINT_NONE; // リセット
 		break;
 	}
 	}
 
 	// レスポンスの送信
-	if (response != NULL) {
-		tcp_write(tpcb, response, strlen(response), TCP_WRITE_FLAG_COPY);
-		free(response);
-		response = NULL;
+	if (info->response != NULL) {
+		tcp_write(tpcb, info->response, strlen(info->response), TCP_WRITE_FLAG_COPY);
+		free(info->response);
+		info->response = NULL;
 	}
 
 	return ERR_OK;
@@ -88,14 +98,27 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, er
 
 static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
-	llhttp_settings_t settings;
-	llhttp_settings_init(&settings);
-	settings.on_url = on_url;
-	settings.on_body = on_body;
-	settings.on_message_complete = on_message_complete;
+	session_info_t *info = malloc(sizeof(session_info_t));
+	if (info == NULL)
+		return ERR_MEM;
 
-	llhttp_init(&parser, HTTP_REQUEST, &settings);
+	info->url = NULL;
+	info->query = NULL;
+	info->endpoint_type = ENDPOINT_NONE;
+	info->response = NULL;
+	info->request = NULL;
 
+	llhttp_t *parser = &info->parser;
+	llhttp_settings_t *settings = (llhttp_settings_t *)&info->settings;
+	llhttp_settings_init(settings);
+	settings->on_url = on_url;
+	settings->on_url_complete = on_url_complete;
+	settings->on_body = on_body;
+	settings->on_message_complete = on_message_complete;
+
+	llhttp_init(parser, HTTP_REQUEST, settings);
+
+	tcp_arg(newpcb, parser);
 	tcp_recv(newpcb, http_recv_cb);
 
 	return ERR_OK;
@@ -109,9 +132,10 @@ void http_server_init(void)
 	tcp_accept(pcb, http_accept_cb);
 }
 
-int response_printf(const char *format, ...)
+int response_printf(session_info_t *info, const char *format, ...)
 {
 	const char header[] = "data: ";
+	const char footer[] = "\r\n";
 	va_list args;
 	va_start(args, format);
 	int len = vsnprintf(NULL, 0, format, args);
@@ -121,34 +145,34 @@ int response_printf(const char *format, ...)
 		return -1; // エラー
 	}
 
-	response = malloc(sizeof(header) + len + 1);
-	if (!response) {
+	info->response = malloc(sizeof(header) + len + sizeof(footer) + 1);
+	if (!info->response) {
 		return -1; // メモリ不足
 	}
 
-	strcpy(response, header);
+	strcpy(info->response, header);
 	va_start(args, format);
-	vsnprintf(&response[sizeof(header) - 1], len + 1, format, args);
+	vsnprintf(&info->response[sizeof(header) - 1], len + 1, format, args);
 	va_end(args);
+	strcat(&info->response[sizeof(header) + len - 1], footer);
 
 	return len;
 }
 
-const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
 const char invalid_request[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}";
 const char method_not_found[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
+const char location_not_configured[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}\n";
 const char unknown_tool[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Unknown tool\"}}";
 const char invalid_protocol[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Invalid protocol version\"}}";
-
-const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
-const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"inputSchema\":{\"title\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"inputSchema\":{\"title\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
-
 const char invalid_context[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid context\"}, \"id\": %d}\n";
-const char status_ok[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n";
 const char missing_fields[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing fields\"}, \"id\": %d}\n";
 const char missing_call_arguments[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing call arguments\"}, \"id\": %d}\n";
+const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
+
+const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
+const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"switch.set\",\"description\":\"Turn the switch ON or OFF.\",\"inputSchema\":{\"title\":\"switch.set\",\"description\":\"Turn the switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"switch.set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"switch.set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
+const char status_ok[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n";
 const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n";
-const char location_not_configured[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}\n";
 
 // コンテキスト保持（簡易構造体）
 typedef struct
@@ -159,11 +183,11 @@ typedef struct
 
 SwitchServerContext context;
 
-void handle_set_context(JSON_Object *params, int id)
+void handle_set_context(session_info_t *info, JSON_Object *params, int id)
 {
 	JSON_Object *ctx = json_object_get_object(params, "context");
 	if (!ctx) {
-               response_printf(invalid_context, id);
+		response_printf(info, invalid_context, id);
 		return;
 	}
 
@@ -175,62 +199,120 @@ void handle_set_context(JSON_Object *params, int id)
 		strncpy(context.location, loc, sizeof(context.location));
 		strncpy(context.url, url, sizeof(context.url));
 
-               response_printf(status_ok, id);
+		response_printf(info, status_ok, id);
 	}
 	else {
-               response_printf(missing_fields, id);
+		response_printf(info, missing_fields, id);
 	}
 }
 
-void handle_call(JSON_Object *params, int id)
+void handle_call(session_info_t *info, JSON_Object *params, int id)
 {
 	const char *loc = json_object_get_string(params, "location");
 	const char *switch_id = json_object_get_string(params, "switch_id");
 	const char *state = json_object_get_string(params, "state");
 
 	if (!loc || !switch_id || !state) {
-               response_printf(missing_call_arguments, id);
+		response_printf(info, missing_call_arguments, id);
 		return;
 	}
 
 	if (strcmp(loc, context.location) == 0) {
 		switch_led(state);
-               response_printf(call_success, context.url, switch_id, state, id);
+		response_printf(info, call_success, context.url, switch_id, state, id);
 	}
 	else {
-               response_printf(location_not_configured, id);
+		response_printf(info, location_not_configured, id);
 	}
 }
 
-char *requests = NULL;
-
-static int on_body(llhttp_t *parser, const char *at, size_t length)
+static int on_url(llhttp_t *parser, const char *at, size_t length)
 {
-	if (requests) {
-		char *new_requests = realloc((void *)requests, strlen(requests) + length + 1);
+	session_info_t *info = (session_info_t *)parser;
+	size_t len;
+	if (info->url) {
+		len = strlen(info->url) + length + 1;
+		char *new_requests = realloc((void *)info->url, len);
 		if (!new_requests) {
 			return -1; // メモリ不足
 		}
-		requests = new_requests;
+		info->url = new_requests;
+		strncat((char *)info->url, at, length);
 	}
 	else {
-		requests = malloc(length + 1);
-		if (!requests) {
+		len = length + 1;
+		info->url = malloc(len);
+		if (!info->url) {
 			return -1; // メモリ不足
+		}
+		strncpy((char *)info->url, at, length);
+	}
+
+	info->url[len - 1] = '\0'; // Null-terminate
+
+	return 0;
+}
+
+static int on_url_complete(llhttp_t *parser)
+{
+	session_info_t *info = (session_info_t *)parser;
+
+	for (char *pos = info->url; *pos != '\0'; pos++) {
+		if (*pos == '?') {
+			*pos = '\0';
+			info->query = &pos[1];
+			break;
 		}
 	}
 
-	strncat((char *)requests, at, length);
-	requests[strlen(requests)] = '\0'; // Null-terminate
+	if (strcmp(info->url, "/sse") == 0) {
+		info->endpoint_type = ENDPOINT_SSE;
+	}
+	else if (strcmp(info->url, "/message") == 0 && sse_pcb) {
+		info->endpoint_type = ENDPOINT_MESSAGE;
+	}
+	else if (strcmp(info->url, "/event") == 0 && sse_pcb) {
+		info->endpoint_type = ENDPOINT_EVENT;
+	}
+	else {
+		info->endpoint_type = ENDPOINT_NOT_FOUND;
+	}
+	return 0; // 成功
+}
+
+static int on_body(llhttp_t *parser, const char *at, size_t length)
+{
+	session_info_t *info = (session_info_t *)parser;
+	size_t len;
+	if (info->request) {
+		len = strlen(info->request) + length + 1;
+		char *new_requests = realloc((void *)info->request, len);
+		if (!new_requests) {
+			return -1; // メモリ不足
+		}
+		info->request = new_requests;
+		strncat((char *)info->request, at, length);
+	}
+	else {
+		len = length + 1;
+		info->request = malloc(len);
+		if (!info->request) {
+			return -1; // メモリ不足
+		}
+		strncpy((char *)info->request, at, length);
+	}
+
+	info->request[len - 1] = '\0'; // Null-terminate
 
 	return 0;
 }
 
 static int on_message_complete(llhttp_t *parser)
 {
-	JSON_Value *val = json_parse_string(requests);
+	session_info_t *info = (session_info_t *)parser;
+	JSON_Value *val = json_parse_string(info->request);
 	if (!val) {
-		response_printf(parse_error, response_id);
+		response_printf(info, parse_error, response_id);
 		response_id++;
 		return 0;
 	}
@@ -242,28 +324,32 @@ static int on_message_complete(llhttp_t *parser)
 	const char *name = json_object_get_string(params, "name");
 	JSON_Object *arguments = json_object_get_object(obj, "arguments");
 
-        if (strcmp(method, "initialize") == 0) {
-                const char *version = json_object_dotget_string(obj, "params.protocolVersion");
-                if (version && strcmp(version, "2025-03-26") == 0) {
-                        response_printf(resource, id);
-                }
-                else {
-                        response_printf(invalid_protocol, id);
-                }
-        }
+	if (strcmp(method, "initialize") == 0) {
+		const char *version = json_object_get_string(params, "protocolVersion");
+		if (version && strcmp(version, "2025-03-26") == 0) {
+			response_printf(info, resource, id);
+		}
+		else {
+			response_printf(info, invalid_protocol, id);
+		}
+	}
+	else if (strcmp(method, "notifications/initialized") == 0) {
+		// HTTP/1.1 202 Accepted
+	}
 	else if (strcmp(method, "tools/list") == 0) {
-		response_printf(tool_list, id);
+		// HTTP/1.1 202 Accepted
+		response_printf(info, tool_list, id);
 	}
 	else if (strcmp(method, "tools/call") == 0 && name != NULL) {
 		if (strcmp(name, "mcp.set_context") == 0) {
-			handle_set_context(arguments, id);
+			handle_set_context(info, arguments, id);
 		}
 		else if (strcmp(name, "mcp.call") == 0) {
-			handle_call(arguments, id);
+			handle_call(info, arguments, id);
 		}
 	}
 	else {
-		response_printf(method_not_found, id);
+		response_printf(info, method_not_found, id);
 	}
 
 	json_value_free(val);
