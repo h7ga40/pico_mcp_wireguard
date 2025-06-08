@@ -26,6 +26,7 @@ typedef struct session_info {
 	llhttp_t parser;
 	llhttp_settings_t settings;
 	struct tcp_pcb *pcb;
+	char *method;
 	char *url;
 	char *query;
 	enum endpoint_type endpoint_type;
@@ -38,6 +39,8 @@ static const char empty_string[] = "";
 static int response_id = 1;
 static bool led_on = false;
 
+static int on_method(llhttp_t *parser, const char *at, size_t length);
+static int on_method_complete(llhttp_t *parser);
 static int on_url(llhttp_t *parser, const char *at, size_t length);
 static int on_url_complete(llhttp_t *parser);
 static int on_body(llhttp_t *parser, const char *at, size_t length);
@@ -46,11 +49,11 @@ static int on_message_complete(llhttp_t *parser);
 #if LWIP_MDNS_RESPONDER
 static void srv_txt(struct mdns_service *service, void *txt_userdata)
 {
-  err_t res;
-  LWIP_UNUSED_ARG(txt_userdata);
+	err_t res;
+	LWIP_UNUSED_ARG(txt_userdata);
 
-  res = mdns_resp_add_service_txtitem(service, "path=/", 6);
-  LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
+	res = mdns_resp_add_service_txtitem(service, "path=/", 6);
+	LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
 }
 #endif
 
@@ -61,15 +64,15 @@ static void srv_txt(struct mdns_service *service, void *txt_userdata)
 // chr_off=8 and chr_len=4 would return "5566"
 // Return number of characters put into destination
 static size_t get_mac_ascii(int idx, size_t chr_off, size_t chr_len, char *dest_in) {
-    static const char hexchr[16] = "0123456789ABCDEF";
-    uint8_t mac[6];
-    char *dest = dest_in;
-    assert(chr_off + chr_len <= (2 * sizeof(mac)));
-    cyw43_hal_get_mac(idx, mac);
-    for (; chr_len && (chr_off >> 1) < sizeof(mac); ++chr_off, --chr_len) {
-        *dest++ = hexchr[mac[chr_off >> 1] >> (4 * (1 - (chr_off & 1))) & 0xf];
-    }
-    return dest - dest_in;
+	static const char hexchr[16] = "0123456789ABCDEF";
+	uint8_t mac[6];
+	char *dest = dest_in;
+	assert(chr_off + chr_len <= (2 * sizeof(mac)));
+	cyw43_hal_get_mac(idx, mac);
+	for (; chr_len && (chr_off >> 1) < sizeof(mac); ++chr_off, --chr_len) {
+		*dest++ = hexchr[mac[chr_off >> 1] >> (4 * (1 - (chr_off & 1))) & 0xf];
+	}
+	return dest - dest_in;
 }
 
 static void switch_led(const char *val)
@@ -86,20 +89,20 @@ static void session_info_free(session_info_t *info)
 	free(info);
 }
 
-const char response_200[] =
-	"HTTP/1.1 200 OK\r\n"
+const char response_200[] =	"HTTP/1.1 200 OK\r\n"
 	"Content-Type: text/event-stream\r\n"
 	"Cache-Control: no-cache\r\n"
 	"Connection: keep-alive\r\n\r\n";
-const char response_404[] = "HTTP/1.1 404 Not Found\r\n\r\n";
-const char response_202[] =
-	"HTTP/1.1 202 Accepted\r\n"
+const char response_202[] =	"HTTP/1.1 202 Accepted\r\n"
 	"Transfer-Encoding: chunked\r\n"
 	"\r\n"
 	"8\r\n"
 	"Accepted\r\n"
-	"0\r\n"
-	"\r\n";
+	"0\r\n\r\n";
+const char response_404[] = "HTTP/1.1 404 Not Found\r\n\r\n";
+const char response_405[] =	"HTTP/1.1 405 Method Not Allowed\r\n"
+	"Content-Length: 0\r\n"
+	"Allow: GET\r\n\r\n";
 
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, err_t err)
 {
@@ -145,6 +148,8 @@ static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 	llhttp_t *parser = &info->parser;
 	llhttp_settings_t *settings = (llhttp_settings_t *)&info->settings;
 	llhttp_settings_init(settings);
+	settings->on_method = on_method;
+	settings->on_method_complete = on_method_complete;
 	settings->on_url = on_url;
 	settings->on_url_complete = on_url_complete;
 	settings->on_body = on_body;
@@ -262,6 +267,45 @@ void handle_call(session_info_t *info, JSON_Object *params, int id)
 	}
 }
 
+static int on_method(llhttp_t *parser, const char *at, size_t length)
+{
+	session_info_t *info = (session_info_t *)parser;
+	size_t len;
+	if (info->method) {
+		len = strlen(info->method) + length + 1;
+		char *new_requests = realloc((void *)info->method, len);
+		if (!new_requests) {
+			return -1; // メモリ不足
+		}
+		info->method = new_requests;
+		strncat((char *)info->method, at, length);
+	}
+	else {
+		len = length + 1;
+		info->method = malloc(len);
+		if (!info->method) {
+			return -1; // メモリ不足
+		}
+		strncpy((char *)info->method, at, length);
+	}
+
+	info->method[len - 1] = '\0'; // Null-terminate
+
+	return 0;
+}
+
+static int on_method_complete(llhttp_t *parser)
+{
+	session_info_t *info = (session_info_t *)parser;
+
+	if (strcmp(info->method, "GET") != 0 && strcmp(info->method, "POST") != 0) {
+		tcp_write(info->pcb, response_404, strlen(response_404), TCP_WRITE_FLAG_COPY);
+		return -1; // メソッドがサポートされていない
+	}
+
+	return 0; // 成功
+}
+
 static int on_url(llhttp_t *parser, const char *at, size_t length)
 {
 	session_info_t *info = (session_info_t *)parser;
@@ -349,14 +393,19 @@ static int on_message_complete(llhttp_t *parser)
 
 	switch (info->endpoint_type) {
 	case ENDPOINT_SSE:
-		sse_pcb = info->pcb; // SSE用のPCBを保存
-		tcp_write(info->pcb, response_200, strlen(response_200), TCP_WRITE_FLAG_COPY);
+		if (strcmp(info->method, "POST") == 0) {
+			tcp_write(info->pcb, response_405, strlen(response_405), TCP_WRITE_FLAG_COPY);
+		}
+		else {
+			tcp_write(info->pcb, response_200, strlen(response_200), TCP_WRITE_FLAG_COPY);
+			sse_pcb = info->pcb; // SSE用のPCBを保存
+		}
 		break;
 	case ENDPOINT_MESSAGE:
 	case ENDPOINT_EVENT:
 		tcp_write(info->pcb, response_202, strlen(response_202), TCP_WRITE_FLAG_COPY);
 		break;
-	case ENDPOINT_NOT_FOUND: 
+	case ENDPOINT_NOT_FOUND:
 		tcp_write(info->pcb, response_404, strlen(response_404), TCP_WRITE_FLAG_COPY);
 		break;
 	}
@@ -420,11 +469,11 @@ int main()
 	// Enable wifi station
 	cyw43_arch_enable_sta_mode();
 
-    char hostname[sizeof(CYW43_HOST_NAME) + 4];
-    memcpy(&hostname[0], CYW43_HOST_NAME, sizeof(CYW43_HOST_NAME) - 1);
-    get_mac_ascii(CYW43_HAL_MAC_WLAN0, 8, 4, &hostname[sizeof(CYW43_HOST_NAME) - 1]);
-    hostname[sizeof(hostname) - 1] = '\0';
-    netif_set_hostname(&cyw43_state.netif[CYW43_ITF_STA], hostname);
+	char hostname[sizeof(CYW43_HOST_NAME) + 4];
+	memcpy(&hostname[0], CYW43_HOST_NAME, sizeof(CYW43_HOST_NAME) - 1);
+	get_mac_ascii(CYW43_HAL_MAC_WLAN0, 8, 4, &hostname[sizeof(CYW43_HOST_NAME) - 1]);
+	hostname[sizeof(hostname) - 1] = '\0';
+	netif_set_hostname(&cyw43_state.netif[CYW43_ITF_STA], hostname);
 
 	printf("Connecting to Wi-Fi...\n");
 	if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
@@ -439,18 +488,18 @@ int main()
 	}
 
 #if LWIP_MDNS_RESPONDER
-    // Setup mdns
-    cyw43_arch_lwip_begin();
-    mdns_resp_init();
-    printf("mdns host name %s.local\n", hostname);
+	// Setup mdns
+	cyw43_arch_lwip_begin();
+	mdns_resp_init();
+	printf("mdns host name %s.local\n", hostname);
 #if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 2
-    mdns_resp_add_netif(&cyw43_state.netif[CYW43_ITF_STA], hostname);
-    mdns_resp_add_service(&cyw43_state.netif[CYW43_ITF_STA], "pico_httpd", "_http", DNSSD_PROTO_TCP, HTTP_PORT, srv_txt, NULL);
+	mdns_resp_add_netif(&cyw43_state.netif[CYW43_ITF_STA], hostname);
+	mdns_resp_add_service(&cyw43_state.netif[CYW43_ITF_STA], "pico_httpd", "_http", DNSSD_PROTO_TCP, HTTP_PORT, srv_txt, NULL);
 #else
-    mdns_resp_add_netif(&cyw43_state.netif[CYW43_ITF_STA], hostname, 60);
-    mdns_resp_add_service(&cyw43_state.netif[CYW43_ITF_STA], "pico_httpd", "_http", DNSSD_PROTO_TCP, HTTP_PORT, 60, srv_txt, NULL);
+	mdns_resp_add_netif(&cyw43_state.netif[CYW43_ITF_STA], hostname, 60);
+	mdns_resp_add_service(&cyw43_state.netif[CYW43_ITF_STA], "pico_httpd", "_http", DNSSD_PROTO_TCP, HTTP_PORT, 60, srv_txt, NULL);
 #endif
-    cyw43_arch_lwip_end();
+	cyw43_arch_lwip_end();
 #endif
 
 	http_server_init();
@@ -460,7 +509,7 @@ int main()
 		sleep_ms(1000);
 	}
 #if LWIP_MDNS_RESPONDER
-    mdns_resp_remove_netif(&cyw43_state.netif[CYW43_ITF_STA]);
+	mdns_resp_remove_netif(&cyw43_state.netif[CYW43_ITF_STA]);
 #endif
-    cyw43_arch_deinit();
+	cyw43_arch_deinit();
 }
