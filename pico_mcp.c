@@ -6,8 +6,20 @@
 #include "llhttp.h"
 #include "parson.h"
 
+enum endpoint_type {
+	ENDPOINT_NONE,
+	ENDPOINT_SSE,
+	ENDPOINT_MESSAGE,
+	ENDPOINT_EVENT,
+	ENDPOINT_NOT_FOUND
+};
+
+enum endpoint_type endpoint_type = ENDPOINT_NONE;
 static struct tcp_pcb *sse_pcb = NULL;
-static const char *url = NULL;
+static llhttp_t parser;
+static const char empty_string[] = "";
+static char *response = NULL;
+static int response_id = 1;
 static bool led_on = false;
 
 static void switch_led(const char *val)
@@ -16,66 +28,76 @@ static void switch_led(const char *val)
 	cyw43_gpio_set(&cyw43_state, 0, led_on);
 }
 
-static int on_url(llhttp_t *parser, const char *at, size_t length)
+static int on_url(llhttp_t *parser, const char *url, size_t length)
 {
-	free((void *)url); // 前のURLを解放
-	url = strndup(at, length);
+	if (strcmp(url, "/sse") == 0) {
+		endpoint_type = ENDPOINT_SSE;
+	}
+	else if (strcmp(url, "/message") == 0 && sse_pcb) {
+		endpoint_type = ENDPOINT_MESSAGE;
+	}
+	else if (strcmp(url, "/event") == 0 && sse_pcb) {
+		endpoint_type = ENDPOINT_EVENT;
+	}
+	else {
+		endpoint_type = ENDPOINT_NOT_FOUND;
+	}
+	return 0; // 成功
 }
 
 static int on_body(llhttp_t *parser, const char *at, size_t length);
 static int on_message_complete(llhttp_t *parser);
 
-static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
+static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, err_t err)
 {
-	if (!p)
+	if (!pbuf)
 		return ERR_OK;
 
-	char *data = malloc(p->tot_len + 1);
-	pbuf_copy_partial(p, data, p->tot_len, 0);
-	data[p->tot_len] = '\0';
-	pbuf_free(p);
+	// HTTPリクエストのパース
+	for (struct pbuf *p = pbuf; p != NULL; p = p->next) {
+		llhttp_execute(&parser, p->payload, p->len);
+	}
+	pbuf_free(pbuf);
 
-	llhttp_t parser;
+	switch (endpoint_type) {
+	case ENDPOINT_SSE:
+		sse_pcb = tpcb; // SSE用のPCBを保存
+		endpoint_type = ENDPOINT_NONE; // リセット
+		break;
+	case ENDPOINT_MESSAGE:
+	case ENDPOINT_EVENT:
+		endpoint_type = ENDPOINT_NONE; // リセット
+		break;
+	case ENDPOINT_NOT_FOUND: {
+		const char *res404 = "HTTP/1.1 404 Not Found\r\n\r\n";
+		tcp_write(tpcb, res404, strlen(res404), TCP_WRITE_FLAG_COPY);
+		endpoint_type = ENDPOINT_NONE; // リセット
+		break;
+	}
+	}
+
+	// レスポンスの送信
+	if (response != NULL) {
+		tcp_write(tpcb, response, strlen(response), TCP_WRITE_FLAG_COPY);
+		free(response);
+		response = NULL;
+	}
+
+	return ERR_OK;
+}
+
+static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
+{
 	llhttp_settings_t settings;
 	llhttp_settings_init(&settings);
 	settings.on_url = on_url;
 	settings.on_body = on_body;
 	settings.on_message_complete = on_message_complete;
 
-	// パースしてURIを見る
 	llhttp_init(&parser, HTTP_REQUEST, &settings);
-	llhttp_execute(&parser, data, strlen(data));
 
-	if (strcmp(url, "/sse") == 0) {
-		const char *response =
-			"HTTP/1.1 200 OK\r\n"
-			"Content-Type: text/event-stream\r\n"
-			"Cache-Control: no-cache\r\n"
-			"Connection: keep-alive\r\n\r\n";
-
-		tcp_write(tpcb, response, strlen(response), TCP_WRITE_FLAG_COPY);
-		sse_pcb = tpcb; // 接続保持
-	}
-	else if (strcmp(url, "/message") == 0 && sse_pcb) {
-		const char *msg = "data: Hello from /message\n\n";
-		tcp_write(sse_pcb, msg, strlen(msg), TCP_WRITE_FLAG_COPY);
-	}
-	else if (strcmp(url, "/event") == 0 && sse_pcb) {
-		const char *msg = "event: custom\ndata: Event fired!\n\n";
-		tcp_write(sse_pcb, msg, strlen(msg), TCP_WRITE_FLAG_COPY);
-	}
-	else {
-		const char *res404 = "HTTP/1.1 404 Not Found\r\n\r\n";
-		tcp_write(tpcb, res404, strlen(res404), TCP_WRITE_FLAG_COPY);
-	}
-
-	free(data);
-	return ERR_OK;
-}
-
-static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
-{
 	tcp_recv(newpcb, http_recv_cb);
+
 	return ERR_OK;
 }
 
@@ -85,6 +107,29 @@ void http_server_init(void)
 	tcp_bind(pcb, IP_ADDR_ANY, 80);
 	pcb = tcp_listen(pcb);
 	tcp_accept(pcb, http_accept_cb);
+}
+
+int response_printf(const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	int len = vsnprintf(NULL, 0, format, args);
+	va_end(args);
+
+	if (len < 0) {
+		return -1; // エラー
+	}
+
+	response = malloc(len + 1);
+	if (!response) {
+		return -1; // メモリ不足
+	}
+
+	va_start(args, format);
+	vsnprintf(response, len + 1, format, args);
+	va_end(args);
+
+	return len;
 }
 
 // コンテキスト保持（簡易構造体）
@@ -164,25 +209,42 @@ static int on_body(llhttp_t *parser, const char *at, size_t length)
 	return 0;
 }
 
+const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
+const char invalid_request[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}";
+const char method_not_found[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
+const char unknown_tool[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Unknown tool\"}}";
+
+const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
+const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"inputSchema\":{\"title\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"inputSchema\":{\"title\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
+
 static int on_message_complete(llhttp_t *parser)
 {
 	JSON_Value *val = json_parse_string(requests);
-	if (!val)
-		return -1;
+	if (!val) {
+		response_printf(parse_error, response_id);
+		response_id++;
+		return 0;
+	}
 
 	JSON_Object *obj = json_value_get_object(val);
 	const char *method = json_object_get_string(obj, "method");
 	int id = (int)json_object_get_number(obj, "id");
 	JSON_Object *params = json_object_get_object(obj, "params");
 
-	if (strcmp(method, "mcp.set_context") == 0) {
+	if (strcmp(method, "initialize") == 0) {
+		response_printf(resource, id);
+	}
+	else if (strcmp(method, "tools/list") == 0) {
+		response_printf(tool_list, id);
+	}
+	else if (strcmp(method, "mcp.set_context") == 0) {
 		handle_set_context(params, id);
 	}
 	else if (strcmp(method, "mcp.call") == 0) {
 		handle_call(params, id);
 	}
 	else {
-		printf("{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32601, \"message\": \"Method not found\"}, \"id\": %d}\n", id);
+		response_printf(method_not_found, id);
 	}
 
 	json_value_free(val);
