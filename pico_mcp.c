@@ -7,8 +7,12 @@
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/tcp.h"
+#include "lwip/apps/mdns.h"
+#include "lwip/init.h"
 #include "llhttp.h"
 #include "parson.h"
+
+#define HTTP_PORT 3001
 
 enum endpoint_type {
 	ENDPOINT_NONE,
@@ -39,13 +43,42 @@ static int on_url_complete(llhttp_t *parser);
 static int on_body(llhttp_t *parser, const char *at, size_t length);
 static int on_message_complete(llhttp_t *parser);
 
+#if LWIP_MDNS_RESPONDER
+static void srv_txt(struct mdns_service *service, void *txt_userdata)
+{
+  err_t res;
+  LWIP_UNUSED_ARG(txt_userdata);
+
+  res = mdns_resp_add_service_txtitem(service, "path=/", 6);
+  LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
+}
+#endif
+
+// Return some characters from the ascii representation of the mac address
+// e.g. 112233445566
+// chr_off is index of character in mac to start
+// chr_len is length of result
+// chr_off=8 and chr_len=4 would return "5566"
+// Return number of characters put into destination
+static size_t get_mac_ascii(int idx, size_t chr_off, size_t chr_len, char *dest_in) {
+    static const char hexchr[16] = "0123456789ABCDEF";
+    uint8_t mac[6];
+    char *dest = dest_in;
+    assert(chr_off + chr_len <= (2 * sizeof(mac)));
+    cyw43_hal_get_mac(idx, mac);
+    for (; chr_len && (chr_off >> 1) < sizeof(mac); ++chr_off, --chr_len) {
+        *dest++ = hexchr[mac[chr_off >> 1] >> (4 * (1 - (chr_off & 1))) & 0xf];
+    }
+    return dest - dest_in;
+}
+
 static void switch_led(const char *val)
 {
 	led_on = (strcmp(val, "ON") == 0) ? true : false;
 	cyw43_gpio_set(&cyw43_state, 0, led_on);
 }
 
-void session_info_free(session_info_t *info)
+static void session_info_free(session_info_t *info)
 {
 	free(info->url);
 	free(info->request);
@@ -128,7 +161,7 @@ static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 void http_server_init(void)
 {
 	struct tcp_pcb *pcb = tcp_new();
-	tcp_bind(pcb, IP_ADDR_ANY, 80);
+	tcp_bind(pcb, IP_ADDR_ANY, HTTP_PORT);
 	pcb = tcp_listen(pcb);
 	tcp_accept(pcb, http_accept_cb);
 }
@@ -387,8 +420,14 @@ int main()
 	// Enable wifi station
 	cyw43_arch_enable_sta_mode();
 
+    char hostname[sizeof(CYW43_HOST_NAME) + 4];
+    memcpy(&hostname[0], CYW43_HOST_NAME, sizeof(CYW43_HOST_NAME) - 1);
+    get_mac_ascii(CYW43_HAL_MAC_WLAN0, 8, 4, &hostname[sizeof(CYW43_HOST_NAME) - 1]);
+    hostname[sizeof(hostname) - 1] = '\0';
+    netif_set_hostname(&cyw43_state.netif[CYW43_ITF_STA], hostname);
+
 	printf("Connecting to Wi-Fi...\n");
-	if (cyw43_arch_wifi_connect_timeout_ms("Your Wi-Fi SSID", "Your Wi-Fi Password", CYW43_AUTH_WPA2_AES_PSK, 30000)) {
+	if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
 		printf("failed to connect.\n");
 		return 1;
 	}
@@ -399,10 +438,29 @@ int main()
 		printf("IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
 	}
 
+#if LWIP_MDNS_RESPONDER
+    // Setup mdns
+    cyw43_arch_lwip_begin();
+    mdns_resp_init();
+    printf("mdns host name %s.local\n", hostname);
+#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 2
+    mdns_resp_add_netif(&cyw43_state.netif[CYW43_ITF_STA], hostname);
+    mdns_resp_add_service(&cyw43_state.netif[CYW43_ITF_STA], "pico_httpd", "_http", DNSSD_PROTO_TCP, HTTP_PORT, srv_txt, NULL);
+#else
+    mdns_resp_add_netif(&cyw43_state.netif[CYW43_ITF_STA], hostname, 60);
+    mdns_resp_add_service(&cyw43_state.netif[CYW43_ITF_STA], "pico_httpd", "_http", DNSSD_PROTO_TCP, HTTP_PORT, 60, srv_txt, NULL);
+#endif
+    cyw43_arch_lwip_end();
+#endif
+
 	http_server_init();
 	printf("HTTP server initialized.\n");
 
 	while (true) {
 		sleep_ms(1000);
 	}
+#if LWIP_MDNS_RESPONDER
+    mdns_resp_remove_netif(&cyw43_state.netif[CYW43_ITF_STA]);
+#endif
+    cyw43_arch_deinit();
 }

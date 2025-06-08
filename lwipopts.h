@@ -86,4 +86,8 @@
 #define SLIP_DEBUG                  LWIP_DBG_OFF
 #define DHCP_DEBUG                  LWIP_DBG_OFF
 
+#define LWIP_MDNS_RESPONDER 0
+#define LWIP_IGMP 1
+#define LWIP_NUM_NETIF_CLIENT_DATA (LWIP_MDNS_RESPONDER)
+
 #endif /* __LWIPOPTS_H__ */
