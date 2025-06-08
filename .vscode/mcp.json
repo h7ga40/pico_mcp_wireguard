@@ -1,0 +1,8 @@
+{
+    "servers": {
+    "Pico": {
+      "type": "sse",
+      "url": "http://192.168.3.46:3001/sse"
+    }
+  }
+}
