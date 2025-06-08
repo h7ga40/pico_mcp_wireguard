@@ -136,6 +136,7 @@ const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-
 const char invalid_request[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}";
 const char method_not_found[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
 const char unknown_tool[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Unknown tool\"}}";
+const char invalid_protocol[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Invalid protocol version\"}}";
 
 const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
 const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"inputSchema\":{\"title\":\"switch.set\",\"description\":\"スイッチをONまたはOFFにします。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"inputSchema\":{\"title\":\"switch.set_location\",\"description\":\"スイッチの設置場所を設定します。\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
@@ -233,9 +234,15 @@ static int on_message_complete(llhttp_t *parser)
 	const char *name = json_object_get_string(params, "name");
 	JSON_Object *arguments = json_object_get_object(obj, "arguments");
 
-	if (strcmp(method, "initialize") == 0) {
-		response_printf(resource, id);
-	}
+        if (strcmp(method, "initialize") == 0) {
+                const char *version = json_object_dotget_string(obj, "params.protocolVersion");
+                if (version && strcmp(version, "2025-03-26") == 0) {
+                        response_printf(resource, id);
+                }
+                else {
+                        response_printf(invalid_protocol, id);
+                }
+        }
 	else if (strcmp(method, "tools/list") == 0) {
 		response_printf(tool_list, id);
 	}
