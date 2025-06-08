@@ -21,6 +21,7 @@ enum endpoint_type {
 typedef struct session_info {
 	llhttp_t parser;
 	llhttp_settings_t settings;
+	struct tcp_pcb *pcb;
 	char *url;
 	char *query;
 	enum endpoint_type endpoint_type;
@@ -52,6 +53,21 @@ void session_info_free(session_info_t *info)
 	free(info);
 }
 
+const char response_200[] =
+	"HTTP/1.1 200 OK\r\n"
+	"Content-Type: text/event-stream\r\n"
+	"Cache-Control: no-cache\r\n"
+	"Connection: keep-alive\r\n\r\n";
+const char response_404[] = "HTTP/1.1 404 Not Found\r\n\r\n";
+const char response_202[] =
+	"HTTP/1.1 202 Accepted\r\n"
+	"Transfer-Encoding: chunked\r\n"
+	"\r\n"
+	"8\r\n"
+	"Accepted\r\n"
+	"0\r\n"
+	"\r\n";
+
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, err_t err)
 {
 	session_info_t *info = (session_info_t *)arg;
@@ -69,26 +85,10 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, er
 	}
 	pbuf_free(pbuf);
 
-	switch (info->endpoint_type) {
-	case ENDPOINT_SSE:
-		sse_pcb = tpcb; // SSE用のPCBを保存
-		info->endpoint_type = ENDPOINT_NONE; // リセット
-		break;
-	case ENDPOINT_MESSAGE:
-	case ENDPOINT_EVENT:
-		info->endpoint_type = ENDPOINT_NONE; // リセット
-		break;
-	case ENDPOINT_NOT_FOUND: {
-		const char *res404 = "HTTP/1.1 404 Not Found\r\n\r\n";
-		tcp_write(tpcb, res404, strlen(res404), TCP_WRITE_FLAG_COPY);
-		info->endpoint_type = ENDPOINT_NONE; // リセット
-		break;
-	}
-	}
-
 	// レスポンスの送信
 	if (info->response != NULL) {
-		tcp_write(tpcb, info->response, strlen(info->response), TCP_WRITE_FLAG_COPY);
+		if (sse_pcb != NULL)
+			tcp_write(sse_pcb, info->response, strlen(info->response), TCP_WRITE_FLAG_COPY);
 		free(info->response);
 		info->response = NULL;
 	}
@@ -102,6 +102,7 @@ static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 	if (info == NULL)
 		return ERR_MEM;
 
+	info->pcb = newpcb;
 	info->url = NULL;
 	info->query = NULL;
 	info->endpoint_type = ENDPOINT_NONE;
@@ -134,7 +135,7 @@ void http_server_init(void)
 
 int response_printf(session_info_t *info, const char *format, ...)
 {
-	const char header[] = "data: ";
+	char header[64];
 	const char footer[] = "\r\n";
 	va_list args;
 	va_start(args, format);
@@ -145,16 +146,18 @@ int response_printf(session_info_t *info, const char *format, ...)
 		return -1; // エラー
 	}
 
-	info->response = malloc(sizeof(header) + len + sizeof(footer) + 1);
+	int header_len = snprintf(header, sizeof(header), "\r\n\r\n%x\r\nevent: message\r\ndata: ", (int)(22 + len + sizeof(footer)));
+
+	info->response = malloc(header_len + len + sizeof(footer) + 1);
 	if (!info->response) {
 		return -1; // メモリ不足
 	}
 
 	strcpy(info->response, header);
 	va_start(args, format);
-	vsnprintf(&info->response[sizeof(header) - 1], len + 1, format, args);
+	vsnprintf(&info->response[header_len - 1], len + 1, format, args);
 	va_end(args);
-	strcat(&info->response[sizeof(header) + len - 1], footer);
+	strcat(&info->response[header_len + len - 1], footer);
 
 	return len;
 }
@@ -268,10 +271,10 @@ static int on_url_complete(llhttp_t *parser)
 	if (strcmp(info->url, "/sse") == 0) {
 		info->endpoint_type = ENDPOINT_SSE;
 	}
-	else if (strcmp(info->url, "/message") == 0 && sse_pcb) {
+	else if (strcmp(info->url, "/message") == 0) {
 		info->endpoint_type = ENDPOINT_MESSAGE;
 	}
-	else if (strcmp(info->url, "/event") == 0 && sse_pcb) {
+	else if (strcmp(info->url, "/event") == 0) {
 		info->endpoint_type = ENDPOINT_EVENT;
 	}
 	else {
@@ -310,6 +313,21 @@ static int on_body(llhttp_t *parser, const char *at, size_t length)
 static int on_message_complete(llhttp_t *parser)
 {
 	session_info_t *info = (session_info_t *)parser;
+
+	switch (info->endpoint_type) {
+	case ENDPOINT_SSE:
+		sse_pcb = info->pcb; // SSE用のPCBを保存
+		tcp_write(info->pcb, response_200, strlen(response_200), TCP_WRITE_FLAG_COPY);
+		break;
+	case ENDPOINT_MESSAGE:
+	case ENDPOINT_EVENT:
+		tcp_write(info->pcb, response_202, strlen(response_202), TCP_WRITE_FLAG_COPY);
+		break;
+	case ENDPOINT_NOT_FOUND: 
+		tcp_write(info->pcb, response_404, strlen(response_404), TCP_WRITE_FLAG_COPY);
+		break;
+	}
+
 	JSON_Value *val = json_parse_string(info->request);
 	if (!val) {
 		response_printf(info, parse_error, response_id);
@@ -334,10 +352,9 @@ static int on_message_complete(llhttp_t *parser)
 		}
 	}
 	else if (strcmp(method, "notifications/initialized") == 0) {
-		// HTTP/1.1 202 Accepted
+
 	}
 	else if (strcmp(method, "tools/list") == 0) {
-		// HTTP/1.1 202 Accepted
 		response_printf(info, tool_list, id);
 	}
 	else if (strcmp(method, "tools/call") == 0 && name != NULL) {
