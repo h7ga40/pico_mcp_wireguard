@@ -111,6 +111,7 @@ void http_server_init(void)
 
 int response_printf(const char *format, ...)
 {
+	const char header[] = "data: ";
 	va_list args;
 	va_start(args, format);
 	int len = vsnprintf(NULL, 0, format, args);
@@ -120,13 +121,14 @@ int response_printf(const char *format, ...)
 		return -1; // エラー
 	}
 
-	response = malloc(len + 1);
+	response = malloc(sizeof(header) + len + 1);
 	if (!response) {
 		return -1; // メモリ不足
 	}
 
+	strcpy(response, header);
 	va_start(args, format);
-	vsnprintf(response, len + 1, format, args);
+	vsnprintf(&response[sizeof(header) - 1], len + 1, format, args);
 	va_end(args);
 
 	return len;
