@@ -211,7 +211,7 @@ void http_server_init(void)
 int response_printf(session_info_t *info, const char *format, ...)
 {
 	char header[64];
-	const char footer[] = "\r\n";
+	const char footer[] = "\r\n\r\n";
 	va_list args;
 	va_start(args, format);
 	int len = vsnprintf(NULL, 0, format, args);
@@ -261,9 +261,9 @@ typedef struct
 
 SwitchServerContext context;
 
-void handle_set_context(session_info_t *info, JSON_Object *params, int id)
+void handle_set_context(session_info_t *info, JSON_Object *arguments, int id)
 {
-	JSON_Object *ctx = json_object_get_object(params, "context");
+	JSON_Object *ctx = json_object_get_object(arguments, "context");
 	if (!ctx) {
 		response_printf(info, invalid_context, id);
 		return;
@@ -284,18 +284,18 @@ void handle_set_context(session_info_t *info, JSON_Object *params, int id)
 	}
 }
 
-void handle_call(session_info_t *info, JSON_Object *params, int id)
+void handle_call(session_info_t *info, JSON_Object *arguments, int id)
 {
-	const char *loc = json_object_get_string(params, "location");
-	const char *switch_id = json_object_get_string(params, "switch_id");
-	const char *state = json_object_get_string(params, "state");
+	const char *loc = json_object_get_string(arguments, "location");
+	const char *switch_id = json_object_get_string(arguments, "switch_id");
+	const char *state = json_object_get_string(arguments, "state");
 
 	if (!loc || !switch_id || !state) {
 		response_printf(info, missing_call_arguments, id);
 		return;
 	}
 
-	if (strcmp(loc, context.location) == 0) {
+	if (strlen(context.location) == 0 ||  strcmp(loc, context.location) == 0) {
 		switch_led(state);
 		response_printf(info, call_success, context.url, switch_id, state, id);
 	}
@@ -451,6 +451,10 @@ static int on_message_complete(llhttp_t *parser)
 		break;
 	}
 
+	if(strlen(info->request) == 0) {
+		return 0;
+	}
+
 	JSON_Value *val = json_parse_string(info->request);
 	if (!val) {
 		response_printf(info, parse_error, response_id);
@@ -463,7 +467,7 @@ static int on_message_complete(llhttp_t *parser)
 	int id = (int)json_object_get_number(obj, "id");
 	JSON_Object *params = json_object_get_object(obj, "params");
 	const char *name = json_object_get_string(params, "name");
-	JSON_Object *arguments = json_object_get_object(obj, "arguments");
+	JSON_Object *arguments = json_object_get_object(params, "arguments");
 
 	if (strcmp(method, "initialize") == 0) {
 		const char *version = json_object_get_string(params, "protocolVersion");
