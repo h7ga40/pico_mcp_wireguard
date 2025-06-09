@@ -248,7 +248,7 @@ const char missing_call_arguments[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code
 const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
 
 const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
-const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"switch.set\",\"description\":\"Turn the switch ON or OFF.\",\"inputSchema\":{\"title\":\"switch.set\",\"description\":\"Turn the switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"switch.set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"switch.set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
+const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"set_switch\",\"description\":\"Turn the switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Turn the switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
 const char status_ok[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n";
 const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n";
 
@@ -284,7 +284,7 @@ void handle_set_context(session_info_t *info, JSON_Object *arguments, int id)
 	}
 }
 
-void handle_call(session_info_t *info, JSON_Object *arguments, int id)
+void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 {
 	const char *loc = json_object_get_string(arguments, "location");
 	const char *switch_id = json_object_get_string(arguments, "switch_id");
@@ -485,11 +485,11 @@ static int on_message_complete(llhttp_t *parser)
 		response_printf(info, tool_list, id);
 	}
 	else if (strcmp(method, "tools/call") == 0 && name != NULL) {
-		if (strcmp(name, "mcp.set_context") == 0) {
+		if (strcmp(name, "set_context") == 0) {
 			handle_set_context(info, arguments, id);
 		}
-		else if (strcmp(name, "mcp.call") == 0) {
-			handle_call(info, arguments, id);
+		else if (strcmp(name, "set_switch") == 0) {
+			handle_set_switch(info, arguments, id);
 		}
 	}
 	else {
