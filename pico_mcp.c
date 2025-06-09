@@ -32,6 +32,7 @@ typedef struct session_info {
 	enum endpoint_type endpoint_type;
 	char *request;
 	char *response;
+	char sessionId[24];
 } session_info_t;
 
 static struct tcp_pcb *sse_pcb = NULL;
@@ -45,6 +46,41 @@ static int on_url(llhttp_t *parser, const char *at, size_t length);
 static int on_url_complete(llhttp_t *parser);
 static int on_body(llhttp_t *parser, const char *at, size_t length);
 static int on_message_complete(llhttp_t *parser);
+
+static const char base64url_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+// 3バイト → 4文字（Base64URL）
+void base64url_encode_3bytes(const uint8_t *in, char *out, int len) {
+    uint32_t val = 0;
+    val |= len > 0 ? in[0] << 16 : 0;
+    val |= len > 1 ? in[1] << 8  : 0;
+    val |= len > 2 ? in[2]      : 0;
+
+    out[0] = base64url_chars[(val >> 18) & 0x3F];
+    out[1] = base64url_chars[(val >> 12) & 0x3F];
+    out[2] = (len > 1) ? base64url_chars[(val >> 6) & 0x3F] : '\0';
+    out[3] = (len > 2) ? base64url_chars[val & 0x3F]        : '\0';
+}
+
+// 16バイト → Base64URL（最大22文字＋null終端）
+void base64url_encode_16bytes(const uint8_t *input, char *output) {
+    int out_index = 0;
+    for (int i = 0; i < 16; i += 3) {
+        char temp[4] = {0};
+        int len = (16 - i >= 3) ? 3 : (16 - i);
+        base64url_encode_3bytes(&input[i], temp, len);
+        for (int j = 0; j < 4 && temp[j]; ++j) {
+            output[out_index++] = temp[j];
+        }
+    }
+    output[out_index] = '\0';
+}
+
+void generate_guid(char *output) {
+	rng_128_t rand128;
+	get_rand_128(&rand128);
+	base64url_encode_16bytes((uint8_t *)&rand128, output);
+}
 
 #if LWIP_MDNS_RESPONDER
 static void srv_txt(struct mdns_service *service, void *txt_userdata)
@@ -139,6 +175,7 @@ static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 		return ERR_MEM;
 
 	info->pcb = newpcb;
+	info->method = NULL;
 	info->url = NULL;
 	info->query = NULL;
 	info->endpoint_type = ENDPOINT_NONE;
@@ -397,7 +434,11 @@ static int on_message_complete(llhttp_t *parser)
 			tcp_write(info->pcb, response_405, strlen(response_405), TCP_WRITE_FLAG_COPY);
 		}
 		else {
+			generate_guid(info->sessionId);
 			tcp_write(info->pcb, response_200, strlen(response_200), TCP_WRITE_FLAG_COPY);
+			char temp[] = "41\r\nevent: endpoint\r\ndata: /message?sessionId=0123456789012345678901\r\n\r\n";
+			memcpy(&temp[46], info->sessionId, 22);
+			tcp_write(info->pcb, temp, strlen(temp), TCP_WRITE_FLAG_COPY);
 			sse_pcb = info->pcb; // SSE用のPCBを保存
 		}
 		break;
