@@ -13,6 +13,7 @@
 #include "parson.h"
 
 #define HTTP_PORT 3001
+#define ID_SIZE 22
 
 enum endpoint_type {
 	ENDPOINT_NONE,
@@ -32,10 +33,13 @@ typedef struct session_info {
 	enum endpoint_type endpoint_type;
 	char *request;
 	char *response;
-	char sessionId[24];
+	char sessionId[ID_SIZE + 1];
+	struct tcp_pcb *sse_pcb;
+	struct session_info *next;      // 次のノードへのポインタ
 } session_info_t;
 
-static struct tcp_pcb *sse_pcb = NULL;
+// リストの先頭ポインタ
+static session_info_t *head = NULL;
 static const char empty_string[] = "";
 static int response_id = 1;
 static bool led_on = false;
@@ -111,6 +115,52 @@ static size_t get_mac_ascii(int idx, size_t chr_off, size_t chr_len, char *dest_
 	return dest - dest_in;
 }
 
+// URLデコード関数（簡易版）
+static void url_decode(char *dst, const char *src) {
+	char a, b;
+	while (*src) {
+		if ((*src == '%') &&
+			((a = src[1]) && (b = src[2])) &&
+			(isxdigit(a) && isxdigit(b))) {
+			a = (a >= 'a') ? a - 'a' + 10 : (a >= 'A') ? a - 'A' + 10 : a - '0';
+			b = (b >= 'a') ? b - 'a' + 10 : (b >= 'A') ? b - 'A' + 10 : b - '0';
+			*dst++ = 16 * a + b;
+			src += 3;
+		}
+		else if (*src == '+') {
+			*dst++ = ' ';
+			src++;
+		}
+		else {
+			*dst++ = *src++;
+		}
+	}
+	*dst = '\0';
+}
+
+// クエリ文字列から指定キーの値を返す関数
+static char *get_query_value(const char *query, const char *key) {
+	char *query_copy = strdup(query); // 元の文字列を変更しないようにコピー
+	char *token = strtok(query_copy, "&");
+	size_t key_len = strlen(key);
+
+	while (token) {
+		if (strncmp(token, key, key_len) == 0 && token[key_len] == '=') {
+			char *value_encoded = token + key_len + 1;
+			char *decoded = malloc(strlen(value_encoded) + 1);
+			if (decoded) {
+				url_decode(decoded, value_encoded);
+				free(query_copy);
+				return decoded;
+			}
+		}
+		token = strtok(NULL, "&");
+	}
+
+	free(query_copy);
+	return NULL; // 見つからない場合
+}
+
 static void switch_led(const char *val)
 {
 	led_on = (strcmp(val, "ON") == 0) ? true : false;
@@ -125,6 +175,61 @@ static void session_info_free(session_info_t *info)
 	free(info);
 }
 
+// ノードを末尾に追加
+void append_node(session_info_t *new_node) {
+	if (!new_node) {
+		perror("malloc failed");
+		return;
+	}
+
+	new_node->next = NULL;
+
+	if (!head) {
+		head = new_node;
+		return;
+	}
+
+	session_info_t *curr = head;
+	while (curr->next) {
+		curr = curr->next;
+	}
+	curr->next = new_node;
+}
+
+// IDでノードを削除（成功で1、失敗で0）
+int delete_node(const char sessionId[ID_SIZE]) {
+	session_info_t *curr = head;
+	session_info_t *prev = NULL;
+
+	while (curr) {
+		if (memcmp(curr->sessionId, sessionId, ID_SIZE) == 0) {
+			if (prev) {
+				prev->next = curr->next;
+			}
+			else {
+				head = curr->next;
+			}
+			session_info_free(curr);
+			return 1; // 削除成功
+		}
+		prev = curr;
+		curr = curr->next;
+	}
+	return 0; // 見つからず
+}
+
+session_info_t *find_node(const char sessionId[ID_SIZE]) {
+	session_info_t *curr = head;
+
+	while (curr) {
+		if (memcmp(curr->sessionId, sessionId, ID_SIZE) == 0) {
+			return curr;
+		}
+		curr = curr->next;
+	}
+	return NULL; // 見つからず
+}
+
 const char response_200[] =	"HTTP/1.1 200 OK\r\n"
 	"Content-Type: text/event-stream\r\n"
 	"Cache-Control: no-cache\r\n"
@@ -135,6 +240,7 @@ const char response_202[] =	"HTTP/1.1 202 Accepted\r\n"
 	"8\r\n"
 	"Accepted\r\n"
 	"0\r\n\r\n";
+const char response_400[] = "HTTP/1.1 404 Bad Request\r\n\r\n";
 const char response_404[] = "HTTP/1.1 404 Not Found\r\n\r\n";
 const char response_405[] =	"HTTP/1.1 405 Method Not Allowed\r\n"
 	"Content-Length: 0\r\n"
@@ -145,7 +251,8 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, er
 	session_info_t *info = (session_info_t *)arg;
 	llhttp_t *parser = &info->parser;
 	if (pbuf == NULL) {
-		session_info_free(info);
+		if (!delete_node(info->sessionId))
+			session_info_free(info);
 		tcp_arg(tpcb, NULL);
 		tcp_close(tpcb);
 		return ERR_OK;
@@ -159,8 +266,8 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, er
 
 	// レスポンスの送信
 	if (info->response != NULL) {
-		if (sse_pcb != NULL)
-			tcp_write(sse_pcb, info->response, strlen(info->response), TCP_WRITE_FLAG_COPY);
+		if (info->sse_pcb != NULL)
+			tcp_write(info->sse_pcb, info->response, strlen(info->response), TCP_WRITE_FLAG_COPY);
 		free(info->response);
 		info->response = NULL;
 	}
@@ -174,13 +281,8 @@ static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 	if (info == NULL)
 		return ERR_MEM;
 
+	memset(info, 0, sizeof(session_info_t));
 	info->pcb = newpcb;
-	info->method = NULL;
-	info->url = NULL;
-	info->query = NULL;
-	info->endpoint_type = ENDPOINT_NONE;
-	info->response = NULL;
-	info->request = NULL;
 
 	llhttp_t *parser = &info->parser;
 	llhttp_settings_t *settings = (llhttp_settings_t *)&info->settings;
@@ -221,7 +323,7 @@ int response_printf(session_info_t *info, const char *format, ...)
 		return -1; // エラー
 	}
 
-	int header_len = snprintf(header, sizeof(header), "\r\n\r\n%x\r\nevent: message\r\ndata: ", (int)(22 + len + sizeof(footer)));
+	int header_len = snprintf(header, sizeof(header), "\r\n\r\n%x\r\nevent: message\r\ndata: ", (int)(ID_SIZE + len + sizeof(footer)));
 
 	info->response = malloc(header_len + len + sizeof(footer) + 1);
 	if (!info->response) {
@@ -427,6 +529,8 @@ static int on_body(llhttp_t *parser, const char *at, size_t length)
 static int on_message_complete(llhttp_t *parser)
 {
 	session_info_t *info = (session_info_t *)parser;
+	char *sessionId;
+	session_info_t *sse = NULL;
 
 	switch (info->endpoint_type) {
 	case ENDPOINT_SSE:
@@ -437,21 +541,31 @@ static int on_message_complete(llhttp_t *parser)
 			generate_guid(info->sessionId);
 			tcp_write(info->pcb, response_200, strlen(response_200), TCP_WRITE_FLAG_COPY);
 			char temp[] = "41\r\nevent: endpoint\r\ndata: /message?sessionId=0123456789012345678901\r\n\r\n";
-			memcpy(&temp[46], info->sessionId, 22);
+			memcpy(&temp[46], info->sessionId, ID_SIZE);
 			tcp_write(info->pcb, temp, strlen(temp), TCP_WRITE_FLAG_COPY);
-			sse_pcb = info->pcb; // SSE用のPCBを保存
+			info->sse_pcb = info->pcb; // SSE用のPCBを保存
+			append_node(info);
 		}
 		break;
 	case ENDPOINT_MESSAGE:
 	case ENDPOINT_EVENT:
-		tcp_write(info->pcb, response_202, strlen(response_202), TCP_WRITE_FLAG_COPY);
+		sessionId = get_query_value(info->query, "sessionId");
+		if (sessionId)
+			sse = find_node(sessionId);
+		if (sse) {
+			info->sse_pcb = sse->pcb; // PCBを更新
+			tcp_write(info->pcb, response_202, strlen(response_202), TCP_WRITE_FLAG_COPY);
+		}
+		else {
+			tcp_write(info->pcb, response_400, strlen(response_400), TCP_WRITE_FLAG_COPY);
+		}
 		break;
 	case ENDPOINT_NOT_FOUND:
 		tcp_write(info->pcb, response_404, strlen(response_404), TCP_WRITE_FLAG_COPY);
 		break;
 	}
 
-	if(strlen(info->request) == 0) {
+	if (info->request == NULL || strlen(info->request) == 0) {
 		return 0;
 	}
 
