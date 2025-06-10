@@ -16,32 +16,32 @@ Example request:
 
 This will turn the LED on when `location` equals `office` in the stored context.
 
-## pico-sdkのインストール手順 (日本語)
+## Installing the pico-sdk
 
-以下は以前の手順の抜粋です。
+The following is an excerpt from a previous setup guide.
 
-1. 作業ディレクトリを作成
+1. Create a working directory
    ```bash
    mkdir -p ~/.pico-sdk/sdk
    ```
-2. Raspberry Pi 公式リポジトリから最新リリース(2.1.1)を取得
+2. Download the latest release (2.1.1) from the official Raspberry Pi repository
    ```bash
    cd ~/.pico-sdk/sdk
    git clone -b 2.1.1 https://github.com/raspberrypi/pico-sdk.git 2.1.1
    cd 2.1.1
    git submodule update --init
    ```
-3. `PICO_SDK_PATH` 環境変数を設定
+3. Set the `PICO_SDK_PATH` environment variable
    ```bash
    export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.1.1
    ```
 
-正常にクローンされ、サブモジュールも展開されたことを確認したら、
-`~/.pico-sdk/sdk/2.1.1` に pico-sdk がインストールされたことになります。
+After verifying that the repository was cloned and its submodules were checked out,
+the pico-sdk will be available under `~/.pico-sdk/sdk/2.1.1`.
 
-## ビルド方法
+## Build Instructions
 
-以下のコマンドで Pico SDK を自動取得し、プロジェクトをビルドできます。
+The commands below automatically fetch the Pico SDK and build the project.
 
 ```bash
 mkdir build
@@ -50,4 +50,5 @@ cmake -E env PICO_SDK_FETCH_FROM_GIT=1 cmake ..
 make -j$(nproc)
 ```
 
-ビルドに成功すると `build` ディレクトリ内に `pico_mcp.uf2` などの成果物が生成されます。
+When the build succeeds, artifacts such as `pico_mcp.uf2` are generated in the
+`build` directory.
