@@ -38,3 +38,16 @@ This will turn the LED on when `location` equals `office` in the stored context.
 
 正常にクローンされ、サブモジュールも展開されたことを確認したら、
 `~/.pico-sdk/sdk/2.1.1` に pico-sdk がインストールされたことになります。
+
+## ビルド方法
+
+以下のコマンドで Pico SDK を自動取得し、プロジェクトをビルドできます。
+
+```bash
+mkdir build
+cd build
+cmake -E env PICO_SDK_FETCH_FROM_GIT=1 cmake ..
+make -j$(nproc)
+```
+
+ビルドに成功すると `build` ディレクトリ内に `pico_mcp.uf2` などの成果物が生成されます。
