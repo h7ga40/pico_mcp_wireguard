@@ -55,29 +55,29 @@ static const char base64url_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmno
 
 // 3バイト → 4文字（Base64URL）
 void base64url_encode_3bytes(const uint8_t *in, char *out, int len) {
-    uint32_t val = 0;
-    val |= len > 0 ? in[0] << 16 : 0;
+	uint32_t val = 0;
+	val |= len > 0 ? in[0] << 16 : 0;
     val |= len > 1 ? in[1] << 8  : 0;
     val |= len > 2 ? in[2]      : 0;
 
-    out[0] = base64url_chars[(val >> 18) & 0x3F];
-    out[1] = base64url_chars[(val >> 12) & 0x3F];
-    out[2] = (len > 1) ? base64url_chars[(val >> 6) & 0x3F] : '\0';
+	out[0] = base64url_chars[(val >> 18) & 0x3F];
+	out[1] = base64url_chars[(val >> 12) & 0x3F];
+	out[2] = (len > 1) ? base64url_chars[(val >> 6) & 0x3F] : '\0';
     out[3] = (len > 2) ? base64url_chars[val & 0x3F]        : '\0';
 }
 
 // 16バイト → Base64URL（最大22文字＋null終端）
 void base64url_encode_16bytes(const uint8_t *input, char *output) {
-    int out_index = 0;
-    for (int i = 0; i < 16; i += 3) {
-        char temp[4] = {0};
-        int len = (16 - i >= 3) ? 3 : (16 - i);
-        base64url_encode_3bytes(&input[i], temp, len);
-        for (int j = 0; j < 4 && temp[j]; ++j) {
-            output[out_index++] = temp[j];
-        }
-    }
-    output[out_index] = '\0';
+	int out_index = 0;
+	for (int i = 0; i < 16; i += 3) {
+		char temp[4] = { 0 };
+		int len = (16 - i >= 3) ? 3 : (16 - i);
+		base64url_encode_3bytes(&input[i], temp, len);
+		for (int j = 0; j < 4 && temp[j]; ++j) {
+			output[out_index++] = temp[j];
+		}
+	}
+	output[out_index] = '\0';
 }
 
 void generate_guid(char *output) {
@@ -230,22 +230,22 @@ session_info_t *find_node(const char sessionId[ID_SIZE]) {
 	return NULL; // 見つからず
 }
 
-const char response_200[] =	"HTTP/1.1 200 OK\r\n"
-	"Content-Type: text/event-stream\r\n"
-	"Cache-Control: no-cache,no-store\r\n"
-	"Content-Encoding: identity\r\n"
-	"Connection: keep-alive\r\n\r\n";
-const char response_202[] =	"HTTP/1.1 202 Accepted\r\n"
-	"Transfer-Encoding: chunked\r\n"
-	"\r\n"
-	"8\r\n"
-	"Accepted\r\n"
-	"0\r\n\r\n";
-const char response_400[] = "HTTP/1.1 404 Bad Request\r\n\r\n";
+const char response_200[] = "HTTP/1.1 200 OK\r\n"
+"Content-Type: text/event-stream\r\n"
+"Cache-Control: no-cache,no-store\r\n"
+"Content-Encoding: identity\r\n"
+"Transfer-Encoding: chunked\r\n\r\n";
+const char response_202[] = "HTTP/1.1 202 Accepted\r\n"
+"Transfer-Encoding: chunked\r\n"
+"\r\n"
+"8\r\n"
+"Accepted\r\n"
+"0\r\n\r\n";
+const char response_400[] = "HTTP/1.1 400 Bad Request\r\n\r\n";
 const char response_404[] = "HTTP/1.1 404 Not Found\r\n\r\n";
-const char response_405[] =	"HTTP/1.1 405 Method Not Allowed\r\n"
-	"Content-Length: 0\r\n"
-	"Allow: GET\r\n\r\n";
+const char response_405[] = "HTTP/1.1 405 Method Not Allowed\r\n"
+"Content-Length: 0\r\n"
+"Allow: GET\r\n\r\n";
 
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, err_t err)
 {
@@ -267,8 +267,14 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, er
 
 	// レスポンスの送信
 	if (info->response != NULL) {
-		if (info->sse_pcb != NULL)
-			tcp_write(info->sse_pcb, info->response, strlen(info->response), TCP_WRITE_FLAG_COPY);
+		if (info->sse_pcb != NULL) {
+			char *chunked_response = malloc(strlen(info->response) + 64);
+			if (chunked_response != NULL) {
+				int len = sprintf(chunked_response, "%x\r\n%s\r\n", (int)strlen(info->response), info->response);
+				tcp_write(info->sse_pcb, chunked_response, len, TCP_WRITE_FLAG_COPY);
+				free(chunked_response);
+			}
+		}
 		free(info->response);
 		info->response = NULL;
 	}
@@ -313,8 +319,8 @@ void http_server_init(void)
 
 int response_printf(session_info_t *info, const char *format, ...)
 {
-	char header[64];
-	const char footer[] = "\r\n\r\n";
+	char header[] = "event: message\r\ndata: ";
+	const char footer[] = "\r\n";
 	va_list args;
 	va_start(args, format);
 	int len = vsnprintf(NULL, 0, format, args);
@@ -324,18 +330,16 @@ int response_printf(session_info_t *info, const char *format, ...)
 		return -1; // エラー
 	}
 
-	int header_len = snprintf(header, sizeof(header), "%x\r\nevent: message\r\ndata: ", (int)(ID_SIZE + len + sizeof(footer)));
-
-	info->response = malloc(header_len + len + sizeof(footer) + 1);
+	info->response = malloc(sizeof(header) - 1 + len + sizeof(footer) - 1 + 1);
 	if (!info->response) {
 		return -1; // メモリ不足
 	}
 
 	strcpy(info->response, header);
 	va_start(args, format);
-	vsnprintf(&info->response[header_len - 1], len + 1, format, args);
+	vsnprintf(&info->response[sizeof(header) - 1], len + 1, format, args);
 	va_end(args);
-	strcat(&info->response[header_len + len - 1], footer);
+	strcat(info->response, footer);
 
 	return len;
 }
@@ -398,7 +402,7 @@ void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 		return;
 	}
 
-	if (strlen(context.location) == 0 ||  strcmp(loc, context.location) == 0) {
+	if (strlen(context.location) == 0 || strcmp(loc, context.location) == 0) {
 		switch_led(state);
 		response_printf(info, call_success, context.url, switch_id, state, id);
 	}
@@ -537,23 +541,27 @@ static int on_message_complete(llhttp_t *parser)
 	case ENDPOINT_SSE:
 		if (strcmp(info->method, "POST") == 0) {
 			tcp_write(info->pcb, response_405, strlen(response_405), TCP_WRITE_FLAG_COPY);
+			free(info->request);
+			info->request = NULL;
 		}
 		else {
 			generate_guid(info->sessionId);
 			info->sse_pcb = info->pcb; // SSE用のPCBを保存
 			append_node(info);
-			char rpc[64];
+			char rpc[127] = { 0 };
 			int len = snprintf(rpc, sizeof(rpc), "event: endpoint\r\ndata: /message?sessionId=%s\r\n", info->sessionId);
-			char response[512];
-			len = snprintf(response, sizeof(response), "%s%x\r\n%s\r\n\r\n", response_200, len, rpc);
-			tcp_write(info->pcb, response, len, TCP_WRITE_FLAG_COPY);
+			char response[512] = { 0 };
+			len = snprintf(response, sizeof(response), "%s%x\r\n%s\r\n", response_200, strlen(rpc), rpc);
+			tcp_write(info->pcb, response, strlen(response), TCP_WRITE_FLAG_COPY);
 		}
 		break;
 	case ENDPOINT_MESSAGE:
 	case ENDPOINT_EVENT:
 		sessionId = get_query_value(info->query, "sessionId");
-		if (sessionId)
+		if (sessionId) {
 			sse = find_node(sessionId);
+			free(sessionId);
+		}
 		if (sse) {
 			info->sse_pcb = sse->pcb; // PCBを更新
 			tcp_write(info->pcb, response_202, strlen(response_202), TCP_WRITE_FLAG_COPY);
