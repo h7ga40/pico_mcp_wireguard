@@ -232,7 +232,8 @@ session_info_t *find_node(const char sessionId[ID_SIZE]) {
 
 const char response_200[] =	"HTTP/1.1 200 OK\r\n"
 	"Content-Type: text/event-stream\r\n"
-	"Cache-Control: no-cache\r\n"
+	"Cache-Control: no-cache,no-store\r\n"
+	"Content-Encoding: identity\r\n"
 	"Connection: keep-alive\r\n\r\n";
 const char response_202[] =	"HTTP/1.1 202 Accepted\r\n"
 	"Transfer-Encoding: chunked\r\n"
@@ -323,7 +324,7 @@ int response_printf(session_info_t *info, const char *format, ...)
 		return -1; // エラー
 	}
 
-	int header_len = snprintf(header, sizeof(header), "\r\n\r\n%x\r\nevent: message\r\ndata: ", (int)(ID_SIZE + len + sizeof(footer)));
+	int header_len = snprintf(header, sizeof(header), "%x\r\nevent: message\r\ndata: ", (int)(ID_SIZE + len + sizeof(footer)));
 
 	info->response = malloc(header_len + len + sizeof(footer) + 1);
 	if (!info->response) {
@@ -341,18 +342,18 @@ int response_printf(session_info_t *info, const char *format, ...)
 
 const char invalid_request[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}";
 const char method_not_found[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
-const char location_not_configured[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}\n";
+const char location_not_configured[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}";
 const char unknown_tool[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Unknown tool\"}}";
 const char invalid_protocol[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Invalid protocol version\"}}";
-const char invalid_context[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid context\"}, \"id\": %d}\n";
-const char missing_fields[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing fields\"}, \"id\": %d}\n";
-const char missing_call_arguments[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing call arguments\"}, \"id\": %d}\n";
+const char invalid_context[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid context\"}, \"id\": %d}";
+const char missing_fields[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing fields\"}, \"id\": %d}";
+const char missing_call_arguments[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Missing call arguments\"}, \"id\": %d}";
 const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
 
 const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
 const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"set_switch\",\"description\":\"Turn the switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Turn the switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
 const char status_ok[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n";
-const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}\n";
+const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}";
 
 // コンテキスト保持（簡易構造体）
 typedef struct
@@ -539,12 +540,13 @@ static int on_message_complete(llhttp_t *parser)
 		}
 		else {
 			generate_guid(info->sessionId);
-			tcp_write(info->pcb, response_200, strlen(response_200), TCP_WRITE_FLAG_COPY);
-			char temp[] = "41\r\nevent: endpoint\r\ndata: /message?sessionId=0123456789012345678901\r\n\r\n";
-			memcpy(&temp[46], info->sessionId, ID_SIZE);
-			tcp_write(info->pcb, temp, strlen(temp), TCP_WRITE_FLAG_COPY);
 			info->sse_pcb = info->pcb; // SSE用のPCBを保存
 			append_node(info);
+			char rpc[64];
+			int len = snprintf(rpc, sizeof(rpc), "event: endpoint\r\ndata: /message?sessionId=%s\r\n", info->sessionId);
+			char response[512];
+			len = snprintf(response, sizeof(response), "%s%x\r\n%s\r\n\r\n", response_200, len, rpc);
+			tcp_write(info->pcb, response, len, TCP_WRITE_FLAG_COPY);
 		}
 		break;
 	case ENDPOINT_MESSAGE:
@@ -615,16 +617,8 @@ static int on_message_complete(llhttp_t *parser)
 	return 0;
 }
 
-int main()
+int loop()
 {
-	stdio_init_all();
-
-	// Initialise the Wi-Fi chip
-	if (cyw43_arch_init()) {
-		printf("Wi-Fi init failed\n");
-		return -1;
-	}
-
 	// Enable wifi station
 	cyw43_arch_enable_sta_mode();
 
@@ -634,7 +628,7 @@ int main()
 	hostname[sizeof(hostname) - 1] = '\0';
 	netif_set_hostname(&cyw43_state.netif[CYW43_ITF_STA], hostname);
 
-	printf("Connecting to Wi-Fi...\n");
+	printf("Connecting to Wi-Fi(%s)...\n", WIFI_SSID);
 	if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
 		printf("failed to connect.\n");
 		return 1;
@@ -644,6 +638,7 @@ int main()
 		// Read the ip address in a human readable way
 		uint8_t *ip_address = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
 		printf("IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
+		printf("Hostname %s\n", hostname);
 	}
 
 #if LWIP_MDNS_RESPONDER
@@ -670,5 +665,24 @@ int main()
 #if LWIP_MDNS_RESPONDER
 	mdns_resp_remove_netif(&cyw43_state.netif[CYW43_ITF_STA]);
 #endif
+}
+
+int main()
+{
+	stdio_init_all();
+
+	//while(!stdio_usb_connected())
+	//	__asm("WFI");
+
+	// Initialise the Wi-Fi chip
+	if (cyw43_arch_init()) {
+		printf("Wi-Fi init failed\n");
+		return -1;
+	}
+
+	while (true) {
+		loop();
+	}
+
 	cyw43_arch_deinit();
 }
