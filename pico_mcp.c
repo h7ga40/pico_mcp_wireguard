@@ -184,6 +184,7 @@ static void switch_led(const char *val)
 static void session_info_free(session_info_t *info)
 {
 	free(info->url);
+	free(info->method);
 	free(info->request);
 	free(info->response);
 	free(info);
@@ -371,8 +372,9 @@ const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-
 
 const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
 const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":["
-		"{\"name\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},"
-		"{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}"
+		"{\"name\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"state\"]}},"
+		"{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"location\"]}},"
+		"{\"name\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"inputSchema\":{\"title\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\"]}}"
 	"]}}";
 const char status_ok[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n";
 const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"location\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}";
@@ -381,27 +383,30 @@ const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": tr
 typedef struct
 {
 	char location[32];
-	char url[128];
+	char switch_id[128];
 } SwitchServerContext;
 
 SwitchServerContext context;
 
-void handle_set_context(session_info_t *info, JSON_Object *arguments, int id)
+void handle_set_location(session_info_t *info, JSON_Object *arguments, int id)
 {
-	JSON_Object *ctx = json_object_get_object(arguments, "context");
-	if (!ctx) {
-		response_printf(info, invalid_context, id);
-		return;
+	const char *location = json_object_get_string(arguments, "location");
+
+	if (location) {
+		strncpy(context.location, location, sizeof(context.location));
+		response_printf(info, status_ok, id);
 	}
+	else {
+		response_printf(info, missing_fields, id);
+	}
+}
 
-	JSON_Object *server = json_object_dotget_object(ctx, "switch_servers.servers[0]");
-	const char *loc = json_object_get_string(server, "location");
-	const char *url = json_object_get_string(server, "url");
+void handle_set_switch_id(session_info_t *info, JSON_Object *arguments, int id)
+{
+	const char *switch_id = json_object_get_string(arguments, "switch_id");
 
-	if (loc && url) {
-		strncpy(context.location, loc, sizeof(context.location));
-		strncpy(context.url, url, sizeof(context.url));
-
+	if (switch_id) {
+		strncpy(context.switch_id, switch_id, sizeof(context.switch_id));
 		response_printf(info, status_ok, id);
 	}
 	else {
@@ -415,14 +420,16 @@ void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 	const char *switch_id = json_object_get_string(arguments, "switch_id");
 	const char *state = json_object_get_string(arguments, "state");
 
-	if (!location || !switch_id || !state) {
+	if (!state) {
 		response_printf(info, missing_call_arguments, id);
 		return;
 	}
 
-	if (strlen(context.location) == 0 || strcmp(location, context.location) == 0) {
+	if ((location && strcmp(location, context.location) == 0)
+		|| (switch_id && strcmp(switch_id, context.switch_id) == 0)
+		|| (!location && !switch_id)) {
 		switch_led(state);
-		response_printf(info, call_success, context.location, switch_id, state, id);
+		response_printf(info, call_success, context.location, context.switch_id, state, id);
 	}
 	else {
 		response_printf(info, location_not_configured, id);
@@ -627,8 +634,11 @@ static int on_message_complete(llhttp_t *parser)
 		response_printf(info, tool_list, id);
 	}
 	else if (strcmp(method, "tools/call") == 0 && name != NULL) {
-		if (strcmp(name, "set_context") == 0) {
-			handle_set_context(info, arguments, id);
+		if (strcmp(name, "set_location") == 0) {
+			handle_set_location(info, arguments, id);
+		}
+		else if (strcmp(name, "set_switch_id") == 0) {
+			handle_set_switch_id(info, arguments, id);
 		}
 		else if (strcmp(name, "set_switch") == 0) {
 			handle_set_switch(info, arguments, id);
