@@ -14,6 +14,9 @@
 
 #define HTTP_PORT 3001
 #define ID_SIZE 22
+#define HTTP_NEWLINE "\r\n"
+#define SSE_NEWLINE "\n"
+#define SSE_SEPARATOR "\n"
 
 enum endpoint_type {
 	ENDPOINT_NONE,
@@ -230,22 +233,22 @@ session_info_t *find_node(const char sessionId[ID_SIZE]) {
 	return NULL; // 見つからず
 }
 
-const char response_200[] = "HTTP/1.1 200 OK\r\n"
-"Content-Type: text/event-stream\r\n"
-"Cache-Control: no-cache,no-store\r\n"
-"Content-Encoding: identity\r\n"
-"Transfer-Encoding: chunked\r\n\r\n";
-const char response_202[] = "HTTP/1.1 202 Accepted\r\n"
-"Transfer-Encoding: chunked\r\n"
-"\r\n"
-"8\r\n"
-"Accepted\r\n"
-"0\r\n\r\n";
-const char response_400[] = "HTTP/1.1 400 Bad Request\r\n\r\n";
-const char response_404[] = "HTTP/1.1 404 Not Found\r\n\r\n";
-const char response_405[] = "HTTP/1.1 405 Method Not Allowed\r\n"
-"Content-Length: 0\r\n"
-"Allow: GET\r\n\r\n";
+const char response_200[] = "HTTP/1.1 200 OK"HTTP_NEWLINE
+"Content-Type: text/event-stream"HTTP_NEWLINE
+"Cache-Control: no-cache,no-store"HTTP_NEWLINE
+"Content-Encoding: identity"HTTP_NEWLINE
+"Transfer-Encoding: chunked"HTTP_NEWLINE HTTP_NEWLINE;
+const char response_202[] = "HTTP/1.1 202 Accepted"HTTP_NEWLINE
+"Transfer-Encoding: chunked"HTTP_NEWLINE
+""HTTP_NEWLINE
+"8"HTTP_NEWLINE
+"Accepted"HTTP_NEWLINE
+"0"HTTP_NEWLINE HTTP_NEWLINE;
+const char response_400[] = "HTTP/1.1 400 Bad Request"HTTP_NEWLINE HTTP_NEWLINE;
+const char response_404[] = "HTTP/1.1 404 Not Found"HTTP_NEWLINE HTTP_NEWLINE;
+const char response_405[] = "HTTP/1.1 405 Method Not Allowed"HTTP_NEWLINE
+"Content-Length: 0"HTTP_NEWLINE
+"Allow: GET"HTTP_NEWLINE HTTP_NEWLINE;
 
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, err_t err)
 {
@@ -270,7 +273,7 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, er
 		if (info->sse_pcb != NULL) {
 			char *chunked_response = malloc(strlen(info->response) + 64);
 			if (chunked_response != NULL) {
-				int len = sprintf(chunked_response, "%x\r\n%s\r\n", (int)strlen(info->response), info->response);
+				int len = sprintf(chunked_response, "%x"HTTP_NEWLINE"%s"HTTP_NEWLINE, (int)strlen(info->response), info->response);
 				tcp_write(info->sse_pcb, chunked_response, len, TCP_WRITE_FLAG_COPY);
 				free(chunked_response);
 			}
@@ -319,8 +322,8 @@ void http_server_init(void)
 
 int response_printf(session_info_t *info, const char *format, ...)
 {
-	char header[] = "event: message\r\ndata: ";
-	const char footer[] = "\r\n";
+	char header[] = "event: message"SSE_NEWLINE"data: ";
+	const char footer[] = SSE_NEWLINE SSE_SEPARATOR;
 	va_list args;
 	va_start(args, format);
 	int len = vsnprintf(NULL, 0, format, args);
@@ -549,9 +552,9 @@ static int on_message_complete(llhttp_t *parser)
 			info->sse_pcb = info->pcb; // SSE用のPCBを保存
 			append_node(info);
 			char rpc[127] = { 0 };
-			int len = snprintf(rpc, sizeof(rpc), "event: endpoint\r\ndata: /message?sessionId=%s\r\n", info->sessionId);
+			int len = snprintf(rpc, sizeof(rpc), "event: endpoint"SSE_NEWLINE"data: /message?sessionId=%s"SSE_NEWLINE SSE_SEPARATOR, info->sessionId);
 			char response[512] = { 0 };
-			len = snprintf(response, sizeof(response), "%s%x\r\n%s\r\n", response_200, strlen(rpc), rpc);
+			len = snprintf(response, sizeof(response), "%s%x"HTTP_NEWLINE"%s"HTTP_NEWLINE, response_200, strlen(rpc), rpc);
 			tcp_write(info->pcb, response, strlen(response), TCP_WRITE_FLAG_COPY);
 		}
 		break;
