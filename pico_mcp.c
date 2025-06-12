@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
+#include "hardware/flash.h"
 #include "lwip/tcp.h"
 #include "lwip/apps/mdns.h"
 #include "lwip/init.h"
@@ -44,7 +45,7 @@ typedef struct session_info {
 
 // リストの先頭ポインタ
 static session_info_t *head = NULL;
-static const char empty_string[] = "";
+static char hostname[sizeof(CYW43_HOST_NAME) + 4];
 static int response_id = 1;
 static bool led_on = false;
 
@@ -109,10 +110,10 @@ static void srv_txt(struct mdns_service *service, void *txt_userdata)
 // Return number of characters put into destination
 static size_t get_mac_ascii(int idx, size_t chr_off, size_t chr_len, char *dest_in) {
 	static const char hexchr[16] = "0123456789ABCDEF";
-	uint8_t mac[6];
+	uint8_t mac[8];
 	char *dest = dest_in;
 	assert(chr_off + chr_len <= (2 * sizeof(mac)));
-	cyw43_hal_get_mac(idx, mac);
+	flash_get_unique_id(mac);
 	for (; chr_len && (chr_off >> 1) < sizeof(mac); ++chr_off, --chr_len) {
 		*dest++ = hexchr[mac[chr_off >> 1] >> (4 * (1 - (chr_off & 1))) & 0xf];
 	}
@@ -244,21 +245,22 @@ session_info_t *find_node(const char sessionId[ID_SIZE]) {
 }
 
 const char response_200[] = "HTTP/1.1 200 OK"HTTP_NEWLINE
-"Content-Type: text/event-stream"HTTP_NEWLINE
-"Cache-Control: no-cache,no-store"HTTP_NEWLINE
-"Content-Encoding: identity"HTTP_NEWLINE
-"Transfer-Encoding: chunked"HTTP_NEWLINE HTTP_NEWLINE;
+	"Content-Type: text/event-stream"HTTP_NEWLINE
+	"Cache-Control: no-cache,no-store"HTTP_NEWLINE
+	"Content-Encoding: identity"HTTP_NEWLINE
+	"Connection: keep-alive"HTTP_NEWLINE
+	"Transfer-Encoding: chunked"HTTP_NEWLINE HTTP_NEWLINE;
 const char response_202[] = "HTTP/1.1 202 Accepted"HTTP_NEWLINE
-"Transfer-Encoding: chunked"HTTP_NEWLINE
-""HTTP_NEWLINE
-"8"HTTP_NEWLINE
-"Accepted"HTTP_NEWLINE
-"0"HTTP_NEWLINE HTTP_NEWLINE;
+	"Transfer-Encoding: chunked"HTTP_NEWLINE
+	""HTTP_NEWLINE
+	"8"HTTP_NEWLINE
+	"Accepted"HTTP_NEWLINE
+	"0"HTTP_NEWLINE HTTP_NEWLINE;
 const char response_400[] = "HTTP/1.1 400 Bad Request"HTTP_NEWLINE HTTP_NEWLINE;
 const char response_404[] = "HTTP/1.1 404 Not Found"HTTP_NEWLINE HTTP_NEWLINE;
 const char response_405[] = "HTTP/1.1 405 Method Not Allowed"HTTP_NEWLINE
-"Content-Length: 0"HTTP_NEWLINE
-"Allow: GET"HTTP_NEWLINE HTTP_NEWLINE;
+	"Content-Length: 0"HTTP_NEWLINE
+	"Allow: GET"HTTP_NEWLINE HTTP_NEWLINE;
 
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, err_t err)
 {
@@ -368,9 +370,12 @@ const char missing_call_arguments[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code
 const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
 
 const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
-const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
+const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":["
+		"{\"name\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},"
+		"{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}"
+	"]}}";
 const char status_ok[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n";
-const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}";
+const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"location\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}";
 
 // コンテキスト保持（簡易構造体）
 typedef struct
@@ -406,18 +411,18 @@ void handle_set_context(session_info_t *info, JSON_Object *arguments, int id)
 
 void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 {
-	const char *loc = json_object_get_string(arguments, "location");
+	const char *location = json_object_get_string(arguments, "location");
 	const char *switch_id = json_object_get_string(arguments, "switch_id");
 	const char *state = json_object_get_string(arguments, "state");
 
-	if (!loc || !switch_id || !state) {
+	if (!location || !switch_id || !state) {
 		response_printf(info, missing_call_arguments, id);
 		return;
 	}
 
-	if (strlen(context.location) == 0 || strcmp(loc, context.location) == 0) {
+	if (strlen(context.location) == 0 || strcmp(location, context.location) == 0) {
 		switch_led(state);
-		response_printf(info, call_success, context.url, switch_id, state, id);
+		response_printf(info, call_success, context.location, switch_id, state, id);
 	}
 	else {
 		response_printf(info, location_not_configured, id);
@@ -642,11 +647,6 @@ int loop()
 {
 	// Enable wifi station
 	cyw43_arch_enable_sta_mode();
-
-	char hostname[sizeof(CYW43_HOST_NAME) + 4];
-	memcpy(&hostname[0], CYW43_HOST_NAME, sizeof(CYW43_HOST_NAME) - 1);
-	get_mac_ascii(CYW43_HAL_MAC_WLAN0, 8, 4, &hostname[sizeof(CYW43_HOST_NAME) - 1]);
-	hostname[sizeof(hostname) - 1] = '\0';
 	netif_set_hostname(&cyw43_state.netif[CYW43_ITF_STA], hostname);
 
 	printf("Connecting to Wi-Fi(%s)...\n", WIFI_SSID);
@@ -691,6 +691,10 @@ int loop()
 int main()
 {
 	stdio_init_all();
+
+	memcpy(&hostname[0], CYW43_HOST_NAME, sizeof(CYW43_HOST_NAME) - 1);
+	get_mac_ascii(CYW43_HAL_MAC_WLAN0, 8, 4, &hostname[sizeof(CYW43_HOST_NAME) - 1]);
+	hostname[sizeof(hostname) - 1] = '\0';
 
 	//while(!stdio_usb_connected())
 	//	__asm("WFI");
