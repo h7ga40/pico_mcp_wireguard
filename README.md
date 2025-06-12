@@ -2,19 +2,33 @@
 
 ## LED Control via JSON-RPC
 
-The firmware exposes a `set_switch` JSON-RPC method. When the `location` field matches the value configured with `set_context`, calling `set_switch` with `switch_id` set to `led` and `state` set to `"on"` or `"off"` toggles the onboard LED.
+The firmware exposes JSON-RPC tools that can be invoked using the `tools/call` method. Use `tools/list` to discover available tools:
+`set_location`, `set_switch_id`, and `set_switch`.
+These allow you to configure the target switch and toggle the onboard LED.
 
-Example request:
+Example requests:
 
 ```json
-{ "jsonrpc": "2.0", "method": "set_context", "params": { "context": { "switch_servers": { "servers": [ { "location": "kitchen", "url": "http://192.168.1.101:8080" } ] } } }, "id": 1 }
+{ "jsonrpc": "2.0", "method": "tools/call",
+  "params": { "name": "set_location", "arguments": { "location": "office" } },
+  "id": 1 }
 ```
 
 ```json
-{ "jsonrpc": "2.0", "method": "set_switch", "params": { "function": "switch_control.set_state", "switch_id": "main_light", "state": "on", "location": "kitchen" }, "id": 2 }
+{ "jsonrpc": "2.0", "method": "tools/call",
+  "params": { "name": "set_switch_id", "arguments": { "switch_id": "led" } },
+  "id": 2 }
 ```
 
-Use `set_switch` to toggle a light or other switch on or off. This will turn the LED on when `location` equals `office` in the stored context.
+```json
+{ "jsonrpc": "2.0", "method": "tools/call",
+  "params": { "name": "set_switch", "arguments": { "state": "on" } },
+  "id": 3 }
+```
+
+Call `set_switch` with `"state": "on"` or `"off"`. The LED changes only when the
+request's `location` or `switch_id` matches the previously set values or when
+both fields are omitted.
 
 ## Installing the pico-sdk
 
