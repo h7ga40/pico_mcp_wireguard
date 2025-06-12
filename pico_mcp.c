@@ -97,7 +97,11 @@ static void srv_txt(struct mdns_service *service, void *txt_userdata)
 	err_t res;
 	LWIP_UNUSED_ARG(txt_userdata);
 
-	res = mdns_resp_add_service_txtitem(service, "path=/", 6);
+    res = mdns_resp_add_service_txtitem(service, "path=/sse", strlen("path=/sse"));
+	LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
+    res = mdns_resp_add_service_txtitem(service, "proto=json-rpc", strlen("proto=json-rpc"));
+	LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
+    res = mdns_resp_add_service_txtitem(service, "feature=mcp", strlen("feature=mcp"));
 	LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
 }
 #endif
