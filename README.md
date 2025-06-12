@@ -2,7 +2,7 @@
 
 ## LED Control via JSON-RPC
 
-The firmware exposes a `set_switch` JSON-RPC method. When the `location` field matches the value configured with `set_context`, calling `set_switch` with `switch_id` set to `led` and `state` set to `"ON"` or `"OFF"` toggles the onboard LED.
+The firmware exposes a `set_switch` JSON-RPC method. When the `location` field matches the value configured with `set_context`, calling `set_switch` with `switch_id` set to `led` and `state` set to `"on"` or `"off"` toggles the onboard LED.
 
 Example request:
 
@@ -14,7 +14,7 @@ Example request:
 { "jsonrpc": "2.0", "method": "set_switch", "params": { "function": "switch_control.set_state", "switch_id": "main_light", "state": "on", "location": "kitchen" }, "id": 2 }
 ```
 
-This will turn the LED on when `location` equals `office` in the stored context.
+Use `set_switch` to toggle a light or other switch on or off. This will turn the LED on when `location` equals `office` in the stored context.
 
 ## Installing the pico-sdk
 

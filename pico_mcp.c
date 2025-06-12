@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include "pico/stdlib.h"
@@ -166,8 +167,17 @@ static char *get_query_value(const char *query, const char *key) {
 
 static void switch_led(const char *val)
 {
-	led_on = (strcmp(val, "ON") == 0) ? true : false;
-	cyw43_gpio_set(&cyw43_state, 0, led_on);
+        if (!val) {
+                return;
+        }
+
+        if (strcasecmp(val, "on") == 0) {
+                led_on = true;
+        } else if (strcasecmp(val, "off") == 0) {
+                led_on = false;
+        }
+
+        cyw43_gpio_set(&cyw43_state, 0, led_on);
 }
 
 static void session_info_free(session_info_t *info)
@@ -358,7 +368,7 @@ const char missing_call_arguments[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code
 const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}";
 
 const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
-const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"set_switch\",\"description\":\"Turn the switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Turn the switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
+const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[{\"name\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"switch_id\",\"state\"]}},{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\",\"location\"]}}]}}";
 const char status_ok[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n";
 const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"url\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}";
 
