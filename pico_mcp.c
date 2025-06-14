@@ -62,13 +62,13 @@ static const char base64url_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmno
 void base64url_encode_3bytes(const uint8_t *in, char *out, int len) {
 	uint32_t val = 0;
 	val |= len > 0 ? in[0] << 16 : 0;
-    val |= len > 1 ? in[1] << 8  : 0;
-    val |= len > 2 ? in[2]      : 0;
+	val |= len > 1 ? in[1] << 8  : 0;
+	val |= len > 2 ? in[2]      : 0;
 
 	out[0] = base64url_chars[(val >> 18) & 0x3F];
 	out[1] = base64url_chars[(val >> 12) & 0x3F];
 	out[2] = (len > 1) ? base64url_chars[(val >> 6) & 0x3F] : '\0';
-    out[3] = (len > 2) ? base64url_chars[val & 0x3F]        : '\0';
+	out[3] = (len > 2) ? base64url_chars[val & 0x3F]        : '\0';
 }
 
 // 16バイト → Base64URL（最大22文字＋null終端）
@@ -97,12 +97,12 @@ static void srv_txt(struct mdns_service *service, void *txt_userdata)
 	err_t res;
 	LWIP_UNUSED_ARG(txt_userdata);
 
-    res = mdns_resp_add_service_txtitem(service, "path=/sse", strlen("path=/sse"));
-	LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
-    res = mdns_resp_add_service_txtitem(service, "proto=json-rpc", strlen("proto=json-rpc"));
-	LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
-    res = mdns_resp_add_service_txtitem(service, "feature=mcp", strlen("feature=mcp"));
-	LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
+	res = mdns_resp_add_service_txtitem(service, "path=/sse", strlen("path=/sse"));
+LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
+	res = mdns_resp_add_service_txtitem(service, "proto=json-rpc", strlen("proto=json-rpc"));
+LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
+	res = mdns_resp_add_service_txtitem(service, "feature=mcp", strlen("feature=mcp"));
+LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
 }
 #endif
 
