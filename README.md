@@ -30,6 +30,10 @@ Call `set_switch` with `"state": "on"` or `"off"`. The LED changes only when the
 request's `location` or `switch_id` matches the previously set values or when
 both fields are omitted.
 
+## How it works
+
+<div><video controls src="how_it_works.mp4" muted="false"></video></div>
+
 ## Installing the pico-sdk
 
 The following is an excerpt from a previous setup guide.
