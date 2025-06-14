@@ -35,17 +35,22 @@ both fields are omitted.
 The following is an excerpt from a previous setup guide.
 
 1. Create a working directory
+
    ```bash
    mkdir -p ~/.pico-sdk/sdk
    ```
+
 2. Download the latest release (2.1.1) from the official Raspberry Pi repository
+
    ```bash
    cd ~/.pico-sdk/sdk
    git clone -b 2.1.1 https://github.com/raspberrypi/pico-sdk.git 2.1.1
    cd 2.1.1
    git submodule update --init
    ```
+
 3. Set the `PICO_SDK_PATH` environment variable
+
    ```bash
    export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.1.1
    ```

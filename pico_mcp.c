@@ -172,17 +172,17 @@ static char *get_query_value(const char *query, const char *key) {
 
 static void switch_led(const char *val)
 {
-        if (!val) {
-                return;
-        }
+	if (!val) {
+		return;
+	}
 
-        if (strcasecmp(val, "on") == 0) {
-                led_on = true;
-        } else if (strcasecmp(val, "off") == 0) {
-                led_on = false;
-        }
+	if (strcasecmp(val, "on") == 0) {
+		led_on = true;
+	} else if (strcasecmp(val, "off") == 0) {
+		led_on = false;
+	}
 
-        cyw43_gpio_set(&cyw43_state, 0, led_on);
+	cyw43_gpio_set(&cyw43_state, 0, led_on);
 }
 
 static void session_info_free(session_info_t *info)
@@ -213,6 +213,8 @@ void append_node(session_info_t *new_node) {
 		curr = curr->next;
 	}
 	curr->next = new_node;
+
+	printf("Node appended: %s\n", new_node->sessionId);
 }
 
 // IDでノードを削除（成功で1、失敗で0）
@@ -222,6 +224,7 @@ int delete_node(const char sessionId[ID_SIZE]) {
 
 	while (curr) {
 		if (memcmp(curr->sessionId, sessionId, ID_SIZE) == 0) {
+			printf("Node deleted: %s\n", curr->sessionId);
 			if (prev) {
 				prev->next = curr->next;
 			}
@@ -292,6 +295,7 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, er
 			if (chunked_response != NULL) {
 				int len = sprintf(chunked_response, "%x"HTTP_NEWLINE"%s"HTTP_NEWLINE, (int)strlen(info->response), info->response);
 				tcp_write(info->sse_pcb, chunked_response, len, TCP_WRITE_FLAG_COPY);
+				printf("Response sent to SSE client: %x\n%s", (int)strlen(info->response), info->response);
 				free(chunked_response);
 			}
 		}
@@ -566,12 +570,15 @@ static int on_message_complete(llhttp_t *parser)
 	char *sessionId;
 	session_info_t *sse = NULL;
 
+	printf("HTTP request completed: %s %s\n%s\n", info->method, info->url, info->request ? info->request : "");
+
 	switch (info->endpoint_type) {
 	case ENDPOINT_SSE:
 		if (strcmp(info->method, "POST") == 0) {
 			tcp_write(info->pcb, response_405, strlen(response_405), TCP_WRITE_FLAG_COPY);
 			free(info->request);
 			info->request = NULL;
+			printf("POST method not allowed for /sse endpoint\n");
 		}
 		else {
 			generate_guid(info->sessionId);
@@ -580,8 +587,9 @@ static int on_message_complete(llhttp_t *parser)
 			char rpc[127] = { 0 };
 			int len = snprintf(rpc, sizeof(rpc), "event: endpoint"SSE_NEWLINE"data: /message?sessionId=%s"SSE_NEWLINE SSE_SEPARATOR, info->sessionId);
 			char response[512] = { 0 };
-			len = snprintf(response, sizeof(response), "%s%x"HTTP_NEWLINE"%s"HTTP_NEWLINE, response_200, strlen(rpc), rpc);
+			len = snprintf(response, sizeof(response), "%s%x"HTTP_NEWLINE"%s"HTTP_NEWLINE, response_200, (int)strlen(rpc), rpc);
 			tcp_write(info->pcb, response, strlen(response), TCP_WRITE_FLAG_COPY);
+			printf("SSE session started: %s\n", info->sessionId);
 		}
 		break;
 	case ENDPOINT_MESSAGE:
@@ -594,14 +602,19 @@ static int on_message_complete(llhttp_t *parser)
 		if (sse) {
 			info->sse_pcb = sse->pcb; // PCBを更新
 			tcp_write(info->pcb, response_202, strlen(response_202), TCP_WRITE_FLAG_COPY);
+			printf("Message received for session: %s\n", sse->sessionId);
 		}
 		else {
 			tcp_write(info->pcb, response_400, strlen(response_400), TCP_WRITE_FLAG_COPY);
+			printf("Session not found for message of session: %s\n", sse->sessionId);
 		}
 		break;
 	case ENDPOINT_NOT_FOUND:
 		tcp_write(info->pcb, response_404, strlen(response_404), TCP_WRITE_FLAG_COPY);
-		break;
+		free(info->request);
+		info->request = NULL;
+		printf("Endpoint not found: %s\n", info->url);
+		return 0;
 	}
 
 	if (info->request == NULL || strlen(info->request) == 0) {
