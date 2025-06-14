@@ -32,3 +32,13 @@ make -j$(nproc)
 ```
 
 Successful builds generate artifacts such as `pico_mcp.uf2` inside the `build` directory.
+
+## Formatting
+
+The repository defines a `.editorconfig` file. When editing code, ensure your changes follow these rules. The `.editorconfig-checker.json` file excludes the `parson` and `llhttp` directories. Run the following command from the repository root before committing:
+
+```bash
+npx --yes editorconfig-checker
+```
+
+Only commit changes when this check succeeds.
