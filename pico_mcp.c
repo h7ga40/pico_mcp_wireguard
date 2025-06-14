@@ -410,10 +410,10 @@ void handle_set_location(session_info_t *info, JSON_Object *arguments, int id)
 
 	if (location) {
 		strncpy(context.location, location, sizeof(context.location));
-				char temp[256];
-		sprintf(temp, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
+		char content[256];
+		sprintf(content, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
 			context.switch_id, context.location, get_switch_state());
-	response_printf(info, call_result, temp, id);
+	response_printf(info, call_result, content, id);
 	}
 	else {
 		response_printf(info, missing_fields, id);
@@ -426,10 +426,10 @@ void handle_set_switch_id(session_info_t *info, JSON_Object *arguments, int id)
 
 	if (switch_id) {
 		strncpy(context.switch_id, switch_id, sizeof(context.switch_id));
-		char temp[256];
-		sprintf(temp, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
+		char content[256];
+		sprintf(content, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
 			context.switch_id, context.location, get_switch_state());
-		response_printf(info, call_result, temp, id);
+		response_printf(info, call_result, content, id);
 	}
 	else {
 		response_printf(info, missing_fields, id);
@@ -451,10 +451,10 @@ void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 		|| (switch_id && strcmp(switch_id, context.switch_id) == 0)
 		|| (!location && !switch_id)) {
 		switch_led(state);
-		char temp[256];
-		sprintf(temp, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
+		char content[256];
+		sprintf(content, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
 			context.switch_id, context.location, get_switch_state());
-		response_printf(info, call_result, temp, id);
+		response_printf(info, call_result, content, id);
 	}
 	else {
 		response_printf(info, location_not_configured, id);
