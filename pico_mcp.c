@@ -185,6 +185,15 @@ static void switch_led(const char *val)
 	cyw43_gpio_set(&cyw43_state, 0, led_on);
 }
 
+const char *get_switch_state()
+{
+	if (led_on) {
+		return "on";
+	} else {
+		return "off";
+	}
+}
+
 static void session_info_free(session_info_t *info)
 {
 	free(info->url);
@@ -384,14 +393,13 @@ const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[
 		"{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"location\"]}},"
 		"{\"name\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"inputSchema\":{\"title\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\"]}}"
 	"]}}";
-const char status_ok[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"ok\"}, \"id\": %d}\n";
-const char call_success[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"success\": true, \"location\": \"%s\", \"switch_id\": \"%s\", \"state\": \"%s\"}, \"id\": %d}";
+const char call_result[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"success\", \"content\": [%s]}, \"id\": %d}\n";
 
 // コンテキスト保持（簡易構造体）
 typedef struct
 {
-	char location[32];
-	char switch_id[128];
+	char location[128];
+	char switch_id[32];
 } SwitchServerContext;
 
 SwitchServerContext context;
@@ -402,7 +410,10 @@ void handle_set_location(session_info_t *info, JSON_Object *arguments, int id)
 
 	if (location) {
 		strncpy(context.location, location, sizeof(context.location));
-		response_printf(info, status_ok, id);
+				char temp[256];
+		sprintf(temp, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
+			context.switch_id, context.location, get_switch_state());
+	response_printf(info, call_result, temp, id);
 	}
 	else {
 		response_printf(info, missing_fields, id);
@@ -415,7 +426,10 @@ void handle_set_switch_id(session_info_t *info, JSON_Object *arguments, int id)
 
 	if (switch_id) {
 		strncpy(context.switch_id, switch_id, sizeof(context.switch_id));
-		response_printf(info, status_ok, id);
+		char temp[256];
+		sprintf(temp, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
+			context.switch_id, context.location, get_switch_state());
+		response_printf(info, call_result, temp, id);
 	}
 	else {
 		response_printf(info, missing_fields, id);
@@ -437,7 +451,10 @@ void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 		|| (switch_id && strcmp(switch_id, context.switch_id) == 0)
 		|| (!location && !switch_id)) {
 		switch_led(state);
-		response_printf(info, call_success, context.location, context.switch_id, state, id);
+		char temp[256];
+		sprintf(temp, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
+			context.switch_id, context.location, get_switch_state());
+		response_printf(info, call_result, temp, id);
 	}
 	else {
 		response_printf(info, location_not_configured, id);
