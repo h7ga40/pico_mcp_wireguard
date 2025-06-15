@@ -32,7 +32,9 @@ both fields are omitted.
 
 ## How it works
 
-<div><video controls src="how_it_works.mp4" muted="false"></video></div>
+Use the agent mode of Github copilot Chat in Visual Studio Code.
+
+https://github.com/user-attachments/assets/7c040786-b527-4f8a-829e-545591232b0f
 
 ## Installing the pico-sdk
 
