@@ -73,7 +73,7 @@ target_include_directories(pico_mcp PRIVATE
 
 # Add any user requested libraries
 target_link_libraries(pico_mcp 
-    pico_cyw43_arch_lwip_threadsafe_background
+    pico_cyw43_arch_lwip_poll
 )
 
 pico_add_extra_outputs(pico_mcp)

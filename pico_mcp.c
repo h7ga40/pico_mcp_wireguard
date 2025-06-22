@@ -413,7 +413,7 @@ void handle_set_location(session_info_t *info, JSON_Object *arguments, int id)
 		char content[256];
 		sprintf(content, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
 			context.switch_id, context.location, get_switch_state());
-	response_printf(info, call_result, content, id);
+		response_printf(info, call_result, content, id);
 	}
 	else {
 		response_printf(info, missing_fields, id);
@@ -725,7 +725,16 @@ int loop()
 	printf("HTTP server initialized.\n");
 
 	while (true) {
-		sleep_ms(1000);
+#if PICO_CYW43_ARCH_POLL
+		static absolute_time_t led_time;
+		if (absolute_time_diff_us(get_absolute_time(), led_time) < 0) {
+			led_time = make_timeout_time_ms(1000);
+		}
+        cyw43_arch_poll();
+        cyw43_arch_wait_for_work_until(led_time);
+#else
+        sleep_ms(1000);
+#endif
 	}
 #if LWIP_MDNS_RESPONDER
 	mdns_resp_remove_netif(&cyw43_state.netif[CYW43_ITF_STA]);
