@@ -191,7 +191,7 @@ static void switch_led(const char *val)
 		led_on = false;
 	}
 
-	//cyw43_gpio_set(&cyw43_state, 0, led_on);
+	gpio_put(26, led_on ? 1 : 0);
 }
 
 const char *get_switch_state()
@@ -752,6 +752,8 @@ struct netif g_netif;
 
 int main()
 {
+	gpio_set_dir(26, GPIO_OUT);
+
 	stdio_init_all();
 
 	//while(!stdio_usb_connected())
