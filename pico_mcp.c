@@ -5,12 +5,25 @@
 #include <strings.h>
 #include <stdarg.h>
 #include <stdlib.h>
+
 #include "pico/stdlib.h"
-#include "pico/cyw43_arch.h"
 #include "hardware/flash.h"
-#include "lwip/tcp.h"
-#include "lwip/apps/mdns.h"
+
+#include "wizchip_conf.h"
+#include "socket.h"
+#include "w5x00_spi.h"
+#include "w5x00_lwip.h"
+
 #include "lwip/init.h"
+#include "lwip/netif.h"
+#include "lwip/timeouts.h"
+
+#include "lwip/apps/lwiperf.h"
+#include "lwip/etharp.h"
+#include "lwip/tcp.h"
+#include "lwip/dhcp.h"
+#include "lwip/dns.h"
+
 #include "llhttp.h"
 #include "parson.h"
 
@@ -45,7 +58,6 @@ typedef struct session_info {
 
 // リストの先頭ポインタ
 static session_info_t *head = NULL;
-static char hostname[sizeof(CYW43_HOST_NAME) + 4];
 static int response_id = 1;
 static bool led_on = false;
 
@@ -90,21 +102,6 @@ void generate_guid(char *output) {
 	get_rand_128(&rand128);
 	base64url_encode_16bytes((uint8_t *)&rand128, output);
 }
-
-#if LWIP_MDNS_RESPONDER
-static void srv_txt(struct mdns_service *service, void *txt_userdata)
-{
-	err_t res;
-	LWIP_UNUSED_ARG(txt_userdata);
-
-	res = mdns_resp_add_service_txtitem(service, "path=/sse", strlen("path=/sse"));
-LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
-	res = mdns_resp_add_service_txtitem(service, "proto=json-rpc", strlen("proto=json-rpc"));
-LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
-	res = mdns_resp_add_service_txtitem(service, "feature=mcp", strlen("feature=mcp"));
-LWIP_ERROR("mdns add service txt failed\n", (res == ERR_OK), return);
-}
-#endif
 
 // Return some characters from the ascii representation of the mac address
 // e.g. 112233445566
@@ -182,7 +179,7 @@ static void switch_led(const char *val)
 		led_on = false;
 	}
 
-	cyw43_gpio_set(&cyw43_state, 0, led_on);
+	//cyw43_gpio_set(&cyw43_state, 0, led_on);
 }
 
 const char *get_switch_state()
@@ -689,78 +686,63 @@ static int on_message_complete(llhttp_t *parser)
 
 int loop()
 {
-	// Enable wifi station
-	cyw43_arch_enable_sta_mode();
-	netif_set_hostname(&cyw43_state.netif[CYW43_ITF_STA], hostname);
-
-	printf("Connecting to Wi-Fi(%s)...\n", WIFI_SSID);
-	if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
-		printf("failed to connect.\n");
-		return 1;
-	}
-	else {
-		printf("Connected.\n");
-		// Read the ip address in a human readable way
-		uint8_t *ip_address = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
-		printf("IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
-		printf("Hostname %s\n", hostname);
-	}
-
-#if LWIP_MDNS_RESPONDER
-	// Setup mdns
-	cyw43_arch_lwip_begin();
-	mdns_resp_init();
-	printf("mdns host name %s.local\n", hostname);
-#if LWIP_VERSION_MAJOR >= 2 && LWIP_VERSION_MINOR >= 2
-	mdns_resp_add_netif(&cyw43_state.netif[CYW43_ITF_STA], hostname);
-	mdns_resp_add_service(&cyw43_state.netif[CYW43_ITF_STA], "pico_httpd", "_http", DNSSD_PROTO_TCP, HTTP_PORT, srv_txt, NULL);
-#else
-	mdns_resp_add_netif(&cyw43_state.netif[CYW43_ITF_STA], hostname, 60);
-	mdns_resp_add_service(&cyw43_state.netif[CYW43_ITF_STA], "pico_httpd", "_http", DNSSD_PROTO_TCP, HTTP_PORT, 60, srv_txt, NULL);
-#endif
-	cyw43_arch_lwip_end();
-#endif
-
 	http_server_init();
 	printf("HTTP server initialized.\n");
 
 	while (true) {
-#if PICO_CYW43_ARCH_POLL
-		static absolute_time_t led_time;
-		if (absolute_time_diff_us(get_absolute_time(), led_time) < 0) {
-			led_time = make_timeout_time_ms(1000);
-		}
-        cyw43_arch_poll();
-        cyw43_arch_wait_for_work_until(led_time);
-#else
         sleep_ms(1000);
-#endif
+		/* Cyclic lwIP timers check */
+        sys_check_timeouts();
 	}
-#if LWIP_MDNS_RESPONDER
-	mdns_resp_remove_netif(&cyw43_state.netif[CYW43_ITF_STA]);
-#endif
 }
+
+/* Network */
+extern uint8_t mac[6];
+
+/* LWIP */
+struct netif g_netif;
 
 int main()
 {
 	stdio_init_all();
 
-	memcpy(&hostname[0], CYW43_HOST_NAME, sizeof(CYW43_HOST_NAME) - 1);
-	get_mac_ascii(CYW43_HAL_MAC_WLAN0, 8, 4, &hostname[sizeof(CYW43_HOST_NAME) - 1]);
-	hostname[sizeof(hostname) - 1] = '\0';
-
 	//while(!stdio_usb_connected())
 	//	__asm("WFI");
+    sleep_ms(1000 * 3); // wait for 3 seconds
 
-	// Initialise the Wi-Fi chip
-	if (cyw43_arch_init()) {
-		printf("Wi-Fi init failed\n");
-		return -1;
-	}
+    wizchip_spi_initialize();
+    wizchip_cris_initialize();
+
+    wizchip_reset();
+    wizchip_initialize();
+    wizchip_check();
+
+    // Set ethernet chip MAC address
+    setSHAR(mac);
+    ctlwizchip(CW_RESET_PHY, 0);
+
+    // Initialize LWIP in NO_SYS mode
+    lwip_init();
+
+    netif_add(&g_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL, netif_initialize, netif_input);
+    g_netif.name[0] = 'e';
+    g_netif.name[1] = '0';
+
+    // Assign callbacks for link and status
+    netif_set_link_callback(&g_netif, netif_link_callback);
+    netif_set_status_callback(&g_netif, netif_status_callback);
+
+    // Set the default interface and bring it up
+    netif_set_default(&g_netif);
+    netif_set_link_up(&g_netif);
+    netif_set_up(&g_netif);
+
+    // Start DHCP configuration for an interface
+    dhcp_start(&g_netif);
+
+    dns_init();
 
 	while (true) {
 		loop();
 	}
-
-	cyw43_arch_deinit();
 }
