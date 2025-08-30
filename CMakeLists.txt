@@ -32,6 +32,7 @@ add_definitions(-DDEVICE_BOARD_NAME=W55RP20_EVB_PICO)
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 include(wiznet_pico_lwip_c_sdk_version.cmake)
+include(pico_wireguard_import.cmake)
 
 project(pico_mcp C CXX ASM)
 
@@ -84,6 +85,7 @@ set(WIFI_PASSWORD $ENV{WIFI_PASSWORD})
 # Add the standard include files to the build
 target_include_directories(pico_mcp PRIVATE
     ${PORT_DIR}/lwip
+    ${pico_wireguard_SOURCE_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/llhttp
     ${CMAKE_CURRENT_LIST_DIR}/parson
@@ -91,6 +93,7 @@ target_include_directories(pico_mcp PRIVATE
 
 # Add any user requested libraries
 target_link_libraries(pico_mcp 
+    pico_wireguard
     pico_lwip_nosys
     ETHERNET_FILES
     IOLIBRARY_FILES

@@ -14,6 +14,8 @@
 #include "w5x00_spi.h"
 #include "w5x00_lwip.h"
 
+#include "wireguardif.h"
+
 #include "lwip/init.h"
 #include "lwip/netif.h"
 #include "lwip/timeouts.h"
@@ -26,6 +28,16 @@
 
 #include "llhttp.h"
 #include "parson.h"
+
+#include "argument_definitions.h"
+
+static struct netif wg_netif_struct = {0};
+static struct netif *wg_netif = NULL;
+static uint8_t wireguard_peer_index = WIREGUARDIF_INVALID_INDEX;
+
+#define STRINGIFY(x) #x
+#define TO_STRING(x) STRINGIFY(x)
+#define SPLIT_MAC(mac) STRINGIFY(mac)
 
 #define HTTP_PORT 3001
 #define ID_SIZE 22
@@ -684,6 +696,42 @@ static int on_message_complete(llhttp_t *parser)
 	return 0;
 }
 
+void connect_wireguard() {
+  struct wireguardif_init_data wg;
+  struct wireguardif_peer peer;
+  ip_addr_t ipaddr;
+  ipaddr_aton(TO_STRING(WG_ADDRESS), &ipaddr);
+  ip_addr_t netmask;
+  ipaddr_aton(TO_STRING(WG_SUBNET_MASK_IP), &netmask);
+  ip_addr_t gateway;
+  ipaddr_aton(TO_STRING(WG_GATEWAY_IP), &gateway);
+
+  wg.private_key = TO_STRING(WG_PRIVATE_KEY);
+  wg.listen_port = 51820;
+  wg.bind_netif = NULL;
+
+  wg_netif = netif_add(&wg_netif_struct, &ipaddr, &netmask, &gateway, &wg,
+                       &wireguardif_init, &ip_input);
+
+  netif_set_up(wg_netif);
+
+  wireguardif_peer_init(&peer);
+  peer.public_key = TO_STRING(WG_PUBLIC_KEY);
+  peer.preshared_key = NULL;
+  peer.keep_alive = WG_KEEPALIVE;
+  peer.allowed_ip = ipaddr;
+  peer.allowed_mask = netmask;
+  ipaddr_aton(TO_STRING(WG_ENDPOINT_IP), &peer.endpoint_ip);
+  peer.endport_port = WG_ENDPOINT_PORT;
+
+  wireguardif_add_peer(wg_netif, &peer, &wireguard_peer_index);
+
+  if ((wireguard_peer_index != WIREGUARDIF_INVALID_INDEX) &&
+      !ip_addr_isany(&peer.endpoint_ip)) {
+    wireguardif_connect(wg_netif, wireguard_peer_index);
+  }
+}
+
 int loop()
 {
 	http_server_init();
@@ -741,6 +789,8 @@ int main()
     dhcp_start(&g_netif);
 
     dns_init();
+
+	connect_wireguard();
 
 	while (true) {
 		loop();

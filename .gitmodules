@@ -1,3 +1,6 @@
 [submodule "libraries/ioLibrary_Driver"]
 	path = libraries/ioLibrary_Driver
 	url = https://github.com/Wiznet/ioLibrary_Driver.git
+[submodule "libraries/wireguard-lwip"]
+	path = libraries/wireguard-lwip
+	url = https://github.com/Mr-Pine/pi-pico-wireguard-lwip.git
