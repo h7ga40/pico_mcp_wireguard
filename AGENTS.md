@@ -6,19 +6,19 @@
    ```bash
    mkdir -p ~/.pico-sdk/sdk
    ```
-2. Clone the Pico SDK (release 2.1.1) and initialize submodules:
+2. Clone the Pico SDK (release 2.2.0) and initialize submodules:
    ```bash
    cd ~/.pico-sdk/sdk
-   git clone -b 2.1.1 https://github.com/raspberrypi/pico-sdk.git 2.1.1
-   cd 2.1.1
+   git clone -b 2.2.0 https://github.com/raspberrypi/pico-sdk.git 2.2.0
+   cd 2.2.0
    git submodule update --init
    ```
 3. Set the environment variable pointing to the SDK path:
    ```bash
-   export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.1.1
+   export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.2.0
    ```
 
-After completing these steps, the SDK will be available under `~/.pico-sdk/sdk/2.1.1`.
+After completing these steps, the SDK will be available under `~/.pico-sdk/sdk/2.2.0`.
 
 ## Build Instructions
 
