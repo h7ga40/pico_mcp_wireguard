@@ -29,6 +29,19 @@ set(WIZNET_CHIP W5500)
 add_definitions(-D_WIZCHIP_=W5500)
 add_definitions(-DDEVICE_BOARD_NAME=W55RP20_EVB_PICO)
 
+# Ensure required git submodules are present
+find_package(Git QUIET)
+if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/.git")
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+        RESULT_VARIABLE GIT_SUBMOD_RESULT
+    )
+    if(NOT GIT_SUBMOD_RESULT EQUAL 0)
+        message(FATAL_ERROR "Failed to update git submodules")
+    endif()
+endif()
+
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 include(wiznet_pico_lwip_c_sdk_version.cmake)
