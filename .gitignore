@@ -1,3 +1,7 @@
 build
 !.vscode/*
 .cache
+pc.key
+pc.pub
+pico.key
+pico.pub

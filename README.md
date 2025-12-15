@@ -1,5 +1,70 @@
 # MCP for Raspberry Pi Pico W
 
+## 全体構成
+
+```less
+[ Linux / Windows PC ]
+   WireGuard Client
+   トンネルIP: 10.7.0.1
+        |
+        |  (WireGuard over UDP, LAN)
+        |
+[ Raspberry Pi Pico ]
+   wireguard-lwip
+   トンネルIP: 10.7.0.2
+   listen_port: 51820
+```
+
+## WireGuardの設定(Windows)
+
+Windowsの場合は下記のURLからWireGuardをインストールします。
+
+<https://www.wireguard.com/install/>
+
+### Pico側のキーの作成
+
+```PowerShell
+wg.exe genkey | Tee-Object pico.key | wg.exe pubkey > pico.pub
+```
+
+### Windows側の設定
+
+1. WireGuard を起動
+
+2. 「トンネルを追加」→「空のトンネルを追加」
+
+3. 自動的に鍵が生成されます
+
+公開鍵を<pc.pub>とし、PrivateKeyを<pc.key>とします。
+
+設定を下記のように書き換えます。
+
+```ini
+[Interface]
+PrivateKey = <pc.key>
+Address    = 10.7.0.1/32
+[Peer]
+PublicKey  = <pico.pub>
+AllowedIPs = 10.7.0.2/32
+Endpoint   = 192.168.1.50:51820
+```
+
+### Picoのコードの変更
+
+`argument_definitions.h`を編集して、マクロに値を入れます。
+
+|マクロ|値|備考|
+|-|-|-|
+|WG_PRIVATE_KEY|<pico.key>|Pico側の秘密鍵|
+|WG_ADDRESS|10.7.0.2||
+|WG_SUBNET_MASK_IP|255.255.255.255||
+|WG_GATEWAY_IP|0.0.0.0||
+|WG_PUBLIC_KEY|<pc.pub>|PC側の公開鍵|
+|WG_ALLOWED_IP||未使用|
+|WG_ALLOWED_IP_MASK_IP||未使用|
+|WG_ENDPOINT_IP|192.168.1.100|PC側のIPアドレス|
+|WG_ENDPOINT_PORT|51820|PC側のポート|
+
 ## LED Control via JSON-RPC
 
 The firmware exposes JSON-RPC tools that can be invoked using the `tools/call` method. Use `tools/list` to discover available tools:
