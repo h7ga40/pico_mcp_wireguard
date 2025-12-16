@@ -758,7 +758,7 @@ int main()
 
 	//while(!stdio_usb_connected())
 	//	__asm("WFI");
-    sleep_ms(1000 * 3); // wait for 3 seconds
+	sleep_ms(1000 * 3); // wait for 3 seconds
 
     wizchip_spi_initialize();
     wizchip_cris_initialize();
@@ -786,6 +786,8 @@ int main()
     netif_set_default(&g_netif);
     netif_set_link_up(&g_netif);
     netif_set_up(&g_netif);
+
+    printf("Start DHCP configuration for an interface\n");
 
     // Start DHCP configuration for an interface
     dhcp_start(&g_netif);
