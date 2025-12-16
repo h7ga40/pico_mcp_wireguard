@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,7 +198,11 @@ def write_wg0_conf(
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--outdir", default=".", help="Directory for key files and wg0.conf")
-    ap.add_argument("--argument-definitions-h", required=True, help="Path to argument_definitions.h to patch")
+    ap.add_argument(
+        "--argument-definitions-h",
+        required=True,
+        help="Path to argument_definitions.h/.in to patch and emit to outdir",
+    )
     ap.add_argument("--wg-tool", default=None, help="Explicit path to wg.exe / wg (optional)")
     ap.add_argument("--require-all", type=int, default=1, help="1: error if any macro missing, 0: replace what exists")
 
@@ -221,6 +226,15 @@ def main() -> int:
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
+    argument_definitions_src = Path(args.argument_definitions_h).resolve()
+    if not argument_definitions_src.exists():
+        raise FileNotFoundError(
+            f"--argument-definitions-h not found: {argument_definitions_src}"
+        )
+
+    argument_definitions_out = outdir / "argument_definitions.h"
+    shutil.copyfile(argument_definitions_src, argument_definitions_out)
+
     wg_cmd = find_wg_tool(args.wg_tool)
 
     pico_kp, _, _ = load_or_generate("pico", wg_cmd, outdir)
@@ -242,7 +256,7 @@ def main() -> int:
     }
 
     patch_defines_with_continuations(
-        Path(args.argument_definitions_h),
+        argument_definitions_out,
         replacements,
         require_all=bool(args.require_all),
     )
@@ -260,7 +274,7 @@ def main() -> int:
     )
 
     print("OK")
-    print(f"  Patched: {Path(args.argument_definitions_h).resolve()}")
+    print(f"  Patched: {argument_definitions_out}")
     print(f"  Wrote:   {wg0_path}")
     return 0
 
