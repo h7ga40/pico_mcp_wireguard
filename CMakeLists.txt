@@ -15,9 +15,9 @@ if(WIN32)
 else()
     set(USERHOME $ENV{HOME})
 endif()
-set(sdkVersion 2.2.0)
+set(sdkVersion 2.1.1)
 set(toolchainVersion 14_2_Rel1)
-set(picotoolVersion 2.2.0)
+set(picotoolVersion 2.1.1)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})
     include(${picoVscode})
@@ -82,8 +82,8 @@ pico_set_program_name(pico_mcp "pico_mcp")
 pico_set_program_version(pico_mcp "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(pico_mcp 0)
-pico_enable_stdio_usb(pico_mcp 1)
+pico_enable_stdio_uart(pico_mcp 1)
+pico_enable_stdio_usb(pico_mcp 0)
 
 # Add the standard library to the build
 target_link_libraries(pico_mcp
