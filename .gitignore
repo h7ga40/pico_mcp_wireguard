@@ -5,3 +5,5 @@ pc.key
 pc.pub
 pico.key
 pico.pub
+wg0.conf
+argument_definitions.h

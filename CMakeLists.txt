@@ -115,3 +115,4 @@ target_link_libraries(pico_mcp
 
 pico_add_extra_outputs(pico_mcp)
 
+include(gen_wireguard_artifacts.cmake)
