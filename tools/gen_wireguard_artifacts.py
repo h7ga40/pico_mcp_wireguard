@@ -45,8 +45,8 @@ def find_wg_tool(explicit_path: Optional[str]) -> List[str]:
 
     if os.name == "nt":
         candidates = [
-            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "WireGuard" / "wg.exe",
-            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "WireGuard" / "wg.exe",
+            Path(os.environ.get("ProgramFiles", r"C:\\Program Files")) / "WireGuard" / "wg.exe",
+            Path(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)")) / "WireGuard" / "wg.exe",
         ]
         for c in candidates:
             if c.exists():
