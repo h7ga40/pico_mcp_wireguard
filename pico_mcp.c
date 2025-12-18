@@ -9,6 +9,9 @@
 #include "pico/stdlib.h"
 #include "hardware/flash.h"
 
+#include "bsp/board.h"
+#include "tusb.h"
+
 #include "wizchip_conf.h"
 #include "socket.h"
 #include "w5x00_spi.h"
@@ -50,6 +53,7 @@ enum endpoint_type {
 	ENDPOINT_SSE,
 	ENDPOINT_MESSAGE,
 	ENDPOINT_EVENT,
+	ENDPOINT_KBD,
 	ENDPOINT_NOT_FOUND
 };
 
@@ -288,6 +292,36 @@ const char response_405[] = "HTTP/1.1 405 Method Not Allowed"HTTP_NEWLINE
 	"Content-Length: 0"HTTP_NEWLINE
 	"Allow: GET"HTTP_NEWLINE HTTP_NEWLINE;
 
+// --- Software keyboard web page (served at "/" or "/kbd") ---
+static const char keyboard_html[] =
+"<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+"<title>Pico Remote Keyboard</title>"
+"<style>"
+"body{font-family:system-ui,sans-serif;margin:12px}h1{font-size:20px;margin:0 0 10px}.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}button{font-size:18px;padding:12px 14px}"
+"</style>"
+"<h1>Pico Remote Keyboard</h1>"
+"<div class=\"row\">"
+"<button onclick=\"k('a')\">A</button>"
+"<button onclick=\"k('b')\">B</button>"
+"<button onclick=\"k('c')\">C</button>"
+"<button onclick=\"k('Enter')\">Enter</button>"
+"<button onclick=\"k('Backspace')\">BS</button>"
+"<button onclick=\"k('Escape')\">Esc</button>"
+"</div>"
+"<div class=\"row\">"
+"<button onclick=\"combo(['CTRL','c'])\">Ctrl+C</button>"
+"<button onclick=\"combo(['CTRL','v'])\">Ctrl+V</button>"
+"<button onclick=\"combo(['CTRL','a'])\">Ctrl+A</button>"
+"</div>"
+"<script>"
+"async function rpc(name,args){"
+"const body={jsonrpc:'2.0',method:'tools/call',params:{name,arguments:args},id:1};"
+"const r=await fetch('/message',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});"
+"return r.json();}"
+"async function k(key){await rpc('send_key',{key});}"
+"async function combo(keys){await rpc('send_key',{combo:keys});}"
+"</script>";
+
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, err_t err)
 {
 	session_info_t *info = (session_info_t *)arg;
@@ -400,9 +434,11 @@ const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVe
 const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":["
 		"{\"name\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"state\"]}},"
 		"{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"location\"]}},"
-		"{\"name\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"inputSchema\":{\"title\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\"]}}"
+		"{\"name\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"inputSchema\":{\"title\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\"]}},"
+		"{\"name\":\"send_key\",\"description\":\"Send a USB HID key press.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\"},\"combo\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}}}}"
 	"]}}";
 const char call_result[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"success\", \"content\": [%s]}, \"id\": %d}\n";
+const char invalid_params[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid params\"}, \"id\": %d}";
 
 // コンテキスト保持（簡易構造体）
 typedef struct
@@ -469,6 +505,111 @@ void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 		response_printf(info, location_not_configured, id);
 	}
 }
+
+// -------------------- USB HID keyboard support --------------------
+
+// Tap a single HID key (press then release).
+static void hid_tap(uint8_t modifier, uint8_t keycode)
+{
+	if (!tud_hid_ready()) {
+		return;
+	}
+
+	uint8_t keycodes[6] = { keycode, 0, 0, 0, 0, 0 };
+	tud_hid_keyboard_report(0, modifier, keycodes);
+	sleep_ms(10);
+
+	uint8_t empty[6] = { 0 };
+	tud_hid_keyboard_report(0, 0, empty);
+}
+
+// Minimal key mapping: a-z, A-Z, digits, and some named keys.
+static bool map_key_string(const char *key, uint8_t *modifier, uint8_t *keycode)
+{
+	*modifier = 0;
+	*keycode = 0;
+
+	if (!key || key[0] == '\0') return false;
+
+	// Single character
+	if (key[1] == '\0') {
+		char c = key[0];
+		if (c >= 'a' && c <= 'z') { *keycode = (uint8_t)(HID_KEY_A + (c - 'a')); return true; }
+		if (c >= 'A' && c <= 'Z') { *modifier = KEYBOARD_MODIFIER_LEFTSHIFT; *keycode = (uint8_t)(HID_KEY_A + (c - 'A')); return true; }
+		if (c >= '1' && c <= '9') { *keycode = (uint8_t)(HID_KEY_1 + (c - '1')); return true; }
+		if (c == '0') { *keycode = HID_KEY_0; return true; }
+		if (c == ' ') { *keycode = HID_KEY_SPACE; return true; }
+	}
+
+	// Named keys
+	if (strcasecmp(key, "Enter") == 0) { *keycode = HID_KEY_ENTER; return true; }
+	if (strcasecmp(key, "Backspace") == 0) { *keycode = HID_KEY_BACKSPACE; return true; }
+	if (strcasecmp(key, "Escape") == 0 || strcasecmp(key, "Esc") == 0) { *keycode = HID_KEY_ESCAPE; return true; }
+	if (strcasecmp(key, "Tab") == 0) { *keycode = HID_KEY_TAB; return true; }
+	if (strcasecmp(key, "Space") == 0) { *keycode = HID_KEY_SPACE; return true; }
+
+	return false;
+}
+
+static uint8_t modifier_from_name(const char *name)
+{
+	if (!name) return 0;
+	if (strcasecmp(name, "CTRL") == 0 || strcasecmp(name, "CONTROL") == 0) return KEYBOARD_MODIFIER_LEFTCTRL;
+	if (strcasecmp(name, "SHIFT") == 0) return KEYBOARD_MODIFIER_LEFTSHIFT;
+	if (strcasecmp(name, "ALT") == 0) return KEYBOARD_MODIFIER_LEFTALT;
+	if (strcasecmp(name, "GUI") == 0 || strcasecmp(name, "WIN") == 0 || strcasecmp(name, "CMD") == 0) return KEYBOARD_MODIFIER_LEFTGUI;
+	return 0;
+}
+
+void handle_send_key(session_info_t *info, JSON_Object *arguments, int id)
+{
+	const char *key = json_object_get_string(arguments, "key");
+	JSON_Array *combo = json_object_get_array(arguments, "combo");
+
+	uint8_t mod = 0;
+	uint8_t code = 0;
+
+	if (combo && json_array_get_count(combo) >= 1) {
+		// Interpret combo as ["CTRL","c"] etc.
+		for (size_t i = 0; i < json_array_get_count(combo); i++) {
+			const char *s = json_array_get_string(combo, i);
+			uint8_t m = modifier_from_name(s);
+			if (m) {
+				mod |= m;
+			} else if (!code) {
+				// First non-modifier is treated as the main key
+				if (!map_key_string(s, &mod, &code)) {
+					// If mapping fails, try single-char lower/upper rule with current mod
+					uint8_t tmp_mod = 0, tmp_code = 0;
+					if (map_key_string(s, &tmp_mod, &tmp_code)) {
+						mod |= tmp_mod;
+						code = tmp_code;
+					}
+				}
+			}
+		}
+	} else if (key) {
+		if (!map_key_string(key, &mod, &code)) {
+			response_printf(info, invalid_params, id);
+			return;
+		}
+	} else {
+		response_printf(info, invalid_params, id);
+		return;
+	}
+
+	if (!code) {
+		response_printf(info, invalid_params, id);
+		return;
+	}
+
+	hid_tap(mod, code);
+
+	// Return a minimal success payload
+	response_printf(info, call_result, "\"{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"ok\\\"}\"", id);
+}
+
+
 
 static int on_method(llhttp_t *parser, const char *at, size_t length)
 {
@@ -548,7 +689,10 @@ static int on_url_complete(llhttp_t *parser)
 		}
 	}
 
-	if (strcmp(info->url, "/sse") == 0) {
+	if (strcmp(info->url, "/") == 0 || strcmp(info->url, "/kbd") == 0) {
+		info->endpoint_type = ENDPOINT_KBD;
+	}
+	else if (strcmp(info->url, "/sse") == 0) {
 		info->endpoint_type = ENDPOINT_SSE;
 	}
 	else if (strcmp(info->url, "/message") == 0) {
@@ -618,6 +762,29 @@ static int on_message_complete(llhttp_t *parser)
 			printf("SSE session started: %s\n", info->sessionId);
 		}
 		break;
+
+	case ENDPOINT_KBD:
+		if (strcmp(info->method, "GET") != 0) {
+			tcp_write(info->pcb, response_405, strlen(response_405), TCP_WRITE_FLAG_COPY);
+			free(info->request);
+			info->request = NULL;
+			printf("Non-GET method not allowed for keyboard page\n");
+		} else {
+			char header[256];
+			int body_len = (int)strlen(keyboard_html);
+			int hdr_len = snprintf(header, sizeof(header),
+				"HTTP/1.1 200 OK"HTTP_NEWLINE
+				"Content-Type: text/html; charset=utf-8"HTTP_NEWLINE
+				"Content-Length: %d"HTTP_NEWLINE
+				"Cache-Control: no-store"HTTP_NEWLINE
+				HTTP_NEWLINE, body_len);
+			tcp_write(info->pcb, header, hdr_len, TCP_WRITE_FLAG_COPY);
+			tcp_write(info->pcb, keyboard_html, body_len, TCP_WRITE_FLAG_COPY);
+			free(info->request);
+			info->request = NULL;
+		}
+		break;
+
 	case ENDPOINT_MESSAGE:
 	case ENDPOINT_EVENT:
 		sessionId = get_query_value(info->query, "sessionId");
@@ -686,6 +853,9 @@ static int on_message_complete(llhttp_t *parser)
 		else if (strcmp(name, "set_switch") == 0) {
 			handle_set_switch(info, arguments, id);
 		}
+		else if (strcmp(name, "send_key") == 0) {
+			handle_send_key(info, arguments, id);
+		}
 	}
 	else {
 		response_printf(info, method_not_found, id);
@@ -738,9 +908,13 @@ int loop()
 	printf("HTTP server initialized.\n");
 
 	while (true) {
-        sleep_ms(1000);
+		// TinyUSB device task (HID)
+		tud_task();
+
 		/* Cyclic lwIP timers check */
-        sys_check_timeouts();
+		sys_check_timeouts();
+
+		sleep_ms(1);
 	}
 }
 
@@ -755,6 +929,9 @@ int main()
 	gpio_set_dir(26, GPIO_OUT);
 
 	stdio_init_all();
+
+	board_init();
+	tusb_init();
 
 	//while(!stdio_usb_connected())
 	//	__asm("WFI");

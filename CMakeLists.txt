@@ -72,6 +72,7 @@ add_subdirectory(${PORT_DIR})
 # Add executable. Default name is the project name, version 0.1
 add_executable(pico_mcp 
     pico_mcp.c
+    usb_descriptors.c
     llhttp/llhttp.c
     llhttp/api.c
     llhttp/http.c
@@ -90,10 +91,17 @@ target_link_libraries(pico_mcp
     pico_stdlib
     hardware_spi
     hardware_dma
+    tinyusb_device
+    tinyusb_board
 )
 
 set(WIFI_SSID $ENV{WIFI_SSID})
 set(WIFI_PASSWORD $ENV{WIFI_PASSWORD})
+
+target_compile_definitions(pico_mcp PRIVATE
+    USE_TINYUSB
+    CFG_TUSB_RHPORT0_MODE
+)
 
 # Add the standard include files to the build
 target_include_directories(pico_mcp PRIVATE
