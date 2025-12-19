@@ -45,12 +45,13 @@ endif()
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 include(wiznet_pico_lwip_c_sdk_version.cmake)
-include(pico_wireguard_import.cmake)
 
 project(pico_mcp C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
+
+include(pico_wireguard_import.cmake)
 
 # Set the project root directory if it's not already defined, as may happen if
 # the tests folder is included directly by a parent project, without including
