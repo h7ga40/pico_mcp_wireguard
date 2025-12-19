@@ -8,6 +8,8 @@
 
 #include "pico/stdlib.h"
 #include "hardware/flash.h"
+#include "pico/util/queue.h"
+#include "pico/multicore.h"
 
 #include "bsp/board.h"
 #include "tusb.h"
@@ -508,19 +510,46 @@ void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 
 // -------------------- USB HID keyboard support --------------------
 
+typedef struct {
+	uint8_t modifier;
+	uint8_t keycode;
+} hid_tap_evt_t;
+
+static queue_t g_hid_q;
+
 // Tap a single HID key (press then release).
 static void hid_tap(uint8_t modifier, uint8_t keycode)
 {
-	if (!tud_hid_ready()) {
-		return;
+  hid_tap_evt_t e = { .modifier = modifier, .keycode = keycode };
+
+  // 連打取り逃がしOK → 失敗したら捨てる
+  (void)queue_try_add(&g_hid_q, &e);
+}
+
+static void core1_usb_main(void)
+{
+	board_init();
+	tusb_init();
+
+	while (true) {
+		// TinyUSB device task (HID)
+		tud_task();
+
+		hid_tap_evt_t e;
+		while (queue_try_remove(&g_hid_q, &e)) {
+			if (!tud_hid_ready()) continue;
+
+			// press
+			uint8_t keycodes[6] = { e.keycode, 0,0,0,0,0 };
+			tud_hid_keyboard_report(0, e.modifier, keycodes);
+
+			// 連打取り逃がしOKなら、releaseは即でも良い
+			// ただしホスト依存で取りこぼしが出るなら「数ms遅延」を後述の改善で入れる
+			uint8_t empty[6] = { 0 };
+			tud_hid_keyboard_report(0, 0, empty);
+		}
+		tight_loop_contents();
 	}
-
-	uint8_t keycodes[6] = { keycode, 0, 0, 0, 0, 0 };
-	tud_hid_keyboard_report(0, modifier, keycodes);
-	sleep_ms(10);
-
-	uint8_t empty[6] = { 0 };
-	tud_hid_keyboard_report(0, 0, empty);
 }
 
 // Minimal key mapping: a-z, A-Z, digits, and some named keys.
@@ -867,54 +896,38 @@ static int on_message_complete(llhttp_t *parser)
 }
 
 void connect_wireguard() {
-  struct wireguardif_init_data wg;
-  struct wireguardif_peer peer;
-  ip_addr_t ipaddr;
-  ipaddr_aton(TO_STRING(WG_ADDRESS), &ipaddr);
-  ip_addr_t netmask;
-  ipaddr_aton(TO_STRING(WG_SUBNET_MASK_IP), &netmask);
-  ip_addr_t gateway;
-  ipaddr_aton(TO_STRING(WG_GATEWAY_IP), &gateway);
+	struct wireguardif_init_data wg;
+	struct wireguardif_peer peer;
+	ip_addr_t ipaddr;
+	ipaddr_aton(TO_STRING(WG_ADDRESS), &ipaddr);
+	ip_addr_t netmask;
+	ipaddr_aton(TO_STRING(WG_SUBNET_MASK_IP), &netmask);
+	ip_addr_t gateway;
+	ipaddr_aton(TO_STRING(WG_GATEWAY_IP), &gateway);
 
-  wg.private_key = TO_STRING(WG_PRIVATE_KEY);
-  wg.listen_port = 51820;
-  wg.bind_netif = NULL;
+	wg.private_key = TO_STRING(WG_PRIVATE_KEY);
+	wg.listen_port = 51820;
+	wg.bind_netif = NULL;
 
-  wg_netif = netif_add(&wg_netif_struct, &ipaddr, &netmask, &gateway, &wg,
-                       &wireguardif_init, &ip_input);
+	wg_netif = netif_add(&wg_netif_struct, &ipaddr, &netmask, &gateway, &wg,
+						&wireguardif_init, &ip_input);
 
-  netif_set_up(wg_netif);
+	netif_set_up(wg_netif);
 
-  wireguardif_peer_init(&peer);
-  peer.public_key = TO_STRING(WG_PUBLIC_KEY);
-  peer.preshared_key = NULL;
-  peer.keep_alive = WG_KEEPALIVE;
-  peer.allowed_ip = ipaddr;
-  peer.allowed_mask = netmask;
-  ipaddr_aton(TO_STRING(WG_ENDPOINT_IP), &peer.endpoint_ip);
-  peer.endport_port = WG_ENDPOINT_PORT;
+	wireguardif_peer_init(&peer);
+	peer.public_key = TO_STRING(WG_PUBLIC_KEY);
+	peer.preshared_key = NULL;
+	peer.keep_alive = WG_KEEPALIVE;
+	peer.allowed_ip = ipaddr;
+	peer.allowed_mask = netmask;
+	ipaddr_aton(TO_STRING(WG_ENDPOINT_IP), &peer.endpoint_ip);
+	peer.endport_port = WG_ENDPOINT_PORT;
 
-  wireguardif_add_peer(wg_netif, &peer, &wireguard_peer_index);
+	wireguardif_add_peer(wg_netif, &peer, &wireguard_peer_index);
 
-  if ((wireguard_peer_index != WIREGUARDIF_INVALID_INDEX) &&
-      !ip_addr_isany(&peer.endpoint_ip)) {
-    wireguardif_connect(wg_netif, wireguard_peer_index);
-  }
-}
-
-int loop()
-{
-	http_server_init();
-	printf("HTTP server initialized.\n");
-
-	while (true) {
-		// TinyUSB device task (HID)
-		tud_task();
-
-		/* Cyclic lwIP timers check */
-		sys_check_timeouts();
-
-		sleep_ms(1);
+	if ((wireguard_peer_index != WIREGUARDIF_INVALID_INDEX) &&
+		!ip_addr_isany(&peer.endpoint_ip)) {
+		wireguardif_connect(wg_netif, wireguard_peer_index);
 	}
 }
 
@@ -924,52 +937,66 @@ extern uint8_t mac[6];
 /* LWIP */
 struct netif g_netif;
 
+int loop()
+{
+	http_server_init();
+	printf("HTTP server initialized.\n");
+
+	while (true) {
+		/* Cyclic lwIP timers check */
+		sys_check_timeouts();
+
+		sleep_ms(1);
+	}
+}
+
 int main()
 {
 	gpio_set_dir(26, GPIO_OUT);
 
 	stdio_init_all();
 
-	board_init();
-	tusb_init();
+	queue_init(&g_hid_q, sizeof(hid_tap_evt_t), 32); // 連打は捨ててOKなら浅くて良い
+
+	multicore_launch_core1(core1_usb_main);
 
 	//while(!stdio_usb_connected())
 	//	__asm("WFI");
 	sleep_ms(1000 * 3); // wait for 3 seconds
 
-    wizchip_spi_initialize();
-    wizchip_cris_initialize();
+	wizchip_spi_initialize();
+	wizchip_cris_initialize();
 
-    wizchip_reset();
-    wizchip_initialize();
-    wizchip_check();
+	wizchip_reset();
+	wizchip_initialize();
+	wizchip_check();
 
-    // Set ethernet chip MAC address
-    setSHAR(mac);
-    ctlwizchip(CW_RESET_PHY, 0);
+	// Set ethernet chip MAC address
+	setSHAR(mac);
+	ctlwizchip(CW_RESET_PHY, 0);
 
-    // Initialize LWIP in NO_SYS mode
-    lwip_init();
+	// Initialize LWIP in NO_SYS mode
+	lwip_init();
 
-    netif_add(&g_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL, netif_initialize, netif_input);
-    g_netif.name[0] = 'e';
-    g_netif.name[1] = '0';
+	netif_add(&g_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL, netif_initialize, netif_input);
+	g_netif.name[0] = 'e';
+	g_netif.name[1] = '0';
 
-    // Assign callbacks for link and status
-    netif_set_link_callback(&g_netif, netif_link_callback);
-    netif_set_status_callback(&g_netif, netif_status_callback);
+	// Assign callbacks for link and status
+	netif_set_link_callback(&g_netif, netif_link_callback);
+	netif_set_status_callback(&g_netif, netif_status_callback);
 
-    // Set the default interface and bring it up
-    netif_set_default(&g_netif);
-    netif_set_link_up(&g_netif);
-    netif_set_up(&g_netif);
+	// Set the default interface and bring it up
+	netif_set_default(&g_netif);
+	netif_set_link_up(&g_netif);
+	netif_set_up(&g_netif);
 
-    printf("Start DHCP configuration for an interface\n");
+	printf("Start DHCP configuration for an interface\n");
 
-    // Start DHCP configuration for an interface
-    dhcp_start(&g_netif);
+	// Start DHCP configuration for an interface
+	dhcp_start(&g_netif);
 
-    dns_init();
+	dns_init();
 
 	connect_wireguard();
 

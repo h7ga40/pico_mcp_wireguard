@@ -90,6 +90,7 @@ pico_enable_stdio_usb(pico_mcp 0)
 # Add the standard library to the build
 target_link_libraries(pico_mcp
     pico_stdlib
+    pico_multicore
     hardware_spi
     hardware_dma
     tinyusb_device
