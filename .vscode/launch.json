@@ -2,6 +2,31 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "gen_wireguard_artifacts.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/gen_wireguard_artifacts.py",
+            "args": [
+                "--outdir",
+                "${workspaceFolder}",
+                "--argument-definitions-h",
+                "${workspaceFolder}/argument_definitions.h.in",
+                "--pico-lan-ip",
+                "192.168.1.50",
+                "--pico-listen-port",
+                "51820",
+                "--pc-tunnel-ip",
+                "10.7.0.1",
+                "--pico-tunnel-ip",
+                "10.7.0.2",
+                "--allowed-ips",
+                "10.7.0.2/32",
+                "--require-all",
+                "0"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
             "name": "Pico Debug (Cortex-Debug)",
             "cwd": "${userHome}/.pico-sdk/openocd/0.12.0+dev/scripts",
             "executable": "${command:raspberry-pi-pico.launchTargetPath}",
