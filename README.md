@@ -1,4 +1,10 @@
-# MCP for Raspberry Pi Pico W
+# Remote keyboard for W55RP20-EVB-Pico with WireGuard and MCP Server
+
+## About the “W55RP20-EVB-Pico”
+
+This is an evaluation board enabling Ethernet connectivity by combining the Raspberry Pi Pico's RP2040 CPU with the W5500, which features hardware TCP/IP.
+
+<https://docs.wiznet.io/Product/Chip/MCU/W55RP20/w55rp20-evb-pico>
 
 ## Overview
 
@@ -53,9 +59,9 @@ Edit `argument_definitions.h` and set the macros as follows:
 | Macro | Value | Notes |
 | - | - | - |
 | WG_PRIVATE_KEY | `<pico.key>` | Pico private key |
-| WG_ADDRESS | `10.7.0.2` |  |
-| WG_SUBNET_MASK_IP | `255.255.255.255` |  |
-| WG_GATEWAY_IP | `0.0.0.0` |  |
+| WG_ADDRESS | `10.7.0.2` | Pico IP address |
+| WG_SUBNET_MASK_IP | `255.255.255.255` | PC subnet |
+| WG_GATEWAY_IP | `0.0.0.0` | PC IP address |
 | WG_PUBLIC_KEY | `<pc.pub>` | PC public key |
 | WG_ALLOWED_IP |  | Unused |
 | WG_ALLOWED_IP_MASK_IP |  | Unused |
