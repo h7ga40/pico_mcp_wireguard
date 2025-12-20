@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -54,6 +55,31 @@ def find_wg_tool(explicit_path: Optional[str]) -> List[str]:
         return ["wg.exe"]
 
     return ["wg"]
+
+
+def ensure_wg_available(wg_cmd: List[str]) -> None:
+    exe = wg_cmd[0]
+    exe_path = Path(exe)
+    resolved = shutil.which(exe)
+
+    if exe_path.expanduser().exists() or resolved:
+        return
+
+    system = platform.system()
+    if system == "Windows":
+        install_hint = "Install WireGuard from https://www.wireguard.com/install/ and ensure wg.exe is available in PATH."
+    elif system == "Linux":
+        install_hint = (
+            "Install WireGuard tools (e.g., `sudo apt install wireguard-tools`) or download from "
+            "https://www.wireguard.com/install/."
+        )
+    else:
+        install_hint = "See https://www.wireguard.com/install/ for WireGuard installation instructions for your platform."
+
+    raise RuntimeError(
+        "WireGuard command (wg) was not found; build cannot continue without it.\n"
+        f"{install_hint}"
+    )
 
 
 def read_text_one_line(path: Path) -> str:
@@ -236,6 +262,7 @@ def main() -> int:
     shutil.copyfile(argument_definitions_src, argument_definitions_out)
 
     wg_cmd = find_wg_tool(args.wg_tool)
+    ensure_wg_available(wg_cmd)
 
     pico_kp, _, _ = load_or_generate("pico", wg_cmd, outdir)
     pc_kp, _, _ = load_or_generate("pc", wg_cmd, outdir)
