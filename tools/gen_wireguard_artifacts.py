@@ -249,6 +249,9 @@ def main() -> int:
 
     args = ap.parse_args()
 
+    wg_cmd = find_wg_tool(args.wg_tool)
+    ensure_wg_available(wg_cmd)
+
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -260,9 +263,6 @@ def main() -> int:
 
     argument_definitions_out = outdir / "argument_definitions.h"
     shutil.copyfile(argument_definitions_src, argument_definitions_out)
-
-    wg_cmd = find_wg_tool(args.wg_tool)
-    ensure_wg_available(wg_cmd)
 
     pico_kp, _, _ = load_or_generate("pico", wg_cmd, outdir)
     pc_kp, _, _ = load_or_generate("pc", wg_cmd, outdir)
