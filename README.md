@@ -53,7 +53,7 @@ PrivateKey = <pc.key>
 Address    = 10.7.0.1/32
 [Peer]
 PublicKey  = <pico.pub>
-AllowedIPs = 10.7.0.2/24
+AllowedIPs = 10.7.0.2/32
 Endpoint   = 192.168.1.50:51820
 ```
 
@@ -106,7 +106,7 @@ package names and service managers as needed for other distributions.
 
    [Peer]
    PublicKey  = <pico.pub>
-   AllowedIPs = 10.7.0.2/24
+   AllowedIPs = 10.7.0.2/32
    Endpoint   = 192.168.1.50:51820
    ```
 
