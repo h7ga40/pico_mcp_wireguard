@@ -392,7 +392,7 @@ void http_server_init(void)
 	struct tcp_pcb *pcb = tcp_new();
 	ip_addr_t ipaddr;
 	ipaddr_aton(TO_STRING(WG_ADDRESS), &ipaddr);
-	tcp_bind(pcb, ipaddr, HTTP_PORT);
+	tcp_bind(pcb, &ipaddr, HTTP_PORT);
 	pcb = tcp_listen(pcb);
 	tcp_accept(pcb, http_accept_cb);
 }
