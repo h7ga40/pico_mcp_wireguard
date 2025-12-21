@@ -21,6 +21,8 @@ This is an evaluation board enabling Ethernet connectivity by combining the Rasp
    listen_port: 51820
 ```
 
+To access web pages that require keyboard operation, please visit the URL “http://10.7.0.2”.
+
 ## WireGuard Configuration (Windows)
 
 Install WireGuard for Windows from <https://www.wireguard.com/install/>.
