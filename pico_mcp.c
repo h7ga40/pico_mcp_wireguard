@@ -390,7 +390,9 @@ static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err)
 void http_server_init(void)
 {
 	struct tcp_pcb *pcb = tcp_new();
-	tcp_bind(pcb, IP_ADDR_ANY, HTTP_PORT);
+	ip_addr_t ipaddr;
+	ipaddr_aton(TO_STRING(WG_ADDRESS), &ipaddr);
+	tcp_bind(pcb, ipaddr, HTTP_PORT);
 	pcb = tcp_listen(pcb);
 	tcp_accept(pcb, http_accept_cb);
 }
@@ -520,10 +522,10 @@ static queue_t g_hid_q;
 // Tap a single HID key (press then release).
 static void hid_tap(uint8_t modifier, uint8_t keycode)
 {
-  hid_tap_evt_t e = { .modifier = modifier, .keycode = keycode };
+hid_tap_evt_t e = { .modifier = modifier, .keycode = keycode };
 
-  // 連打取り逃がしOK → 失敗したら捨てる
-  (void)queue_try_add(&g_hid_q, &e);
+// 連打取り逃がしOK → 失敗したら捨てる
+(void)queue_try_add(&g_hid_q, &e);
 }
 
 static void core1_usb_main(void)
@@ -982,12 +984,16 @@ int main()
 	// Initialize LWIP in NO_SYS mode
 	lwip_init();
 
-    // Initialize network configuration
-    IP4_ADDR(&g_ip, 192, 168, 1, 50);
-    IP4_ADDR(&g_mask, 255, 255, 255, 0);
-    IP4_ADDR(&g_gateway, 192, 168, 1, 1);
+	// Static IP address initialization (wg0.conf endpoint ip address)
+	IP4_ADDR(&g_ip, 192, 168, 1, 50);
+	IP4_ADDR(&g_mask, 255, 255, 255, 0);
+	IP4_ADDR(&g_gateway, 192, 168, 1, 1);
 
 	netif_add(&g_netif, &g_ip, &g_mask, &g_gateway, NULL, netif_initialize, netif_input);
+	// When configuring a static IP address on a DHCP server
+	// netif_add(&g_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL, netif_initialize, netif_input);
+
+	// Set interface name
 	g_netif.name[0] = 'e';
 	g_netif.name[1] = '0';
 
