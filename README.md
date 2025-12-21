@@ -21,7 +21,10 @@ This is an evaluation board enabling Ethernet connectivity by combining the Rasp
    listen_port: 51820
 ```
 
-To access web pages that require keyboard operation, please visit the URL “http://10.7.0.2”.
+The Pico exposes its LAN interface at `192.168.1.50/24` (gateway `192.168.1.1`) and
+runs the HTTP/MCP server on port `3001`. Access the control page locally at
+`http://192.168.1.50:3001` or through the WireGuard tunnel at
+`http://10.7.0.2:3001`.
 
 ## WireGuard Configuration (Windows)
 
@@ -67,8 +70,8 @@ Edit `argument_definitions.h` and set the macros as follows:
 | WG_PUBLIC_KEY | `<pc.pub>` | PC public key |
 | WG_ALLOWED_IP |  | Unused |
 | WG_ALLOWED_IP_MASK_IP |  | Unused |
-| WG_ENDPOINT_IP | `192.168.1.100` | PC IP address |
-| WG_ENDPOINT_PORT | `51820` | PC WireGuard port |
+| WG_ENDPOINT_IP | `0.0.0.0` | Leave as `0.0.0.0` when the PC initiates the tunnel |
+| WG_ENDPOINT_PORT | `0` | Leave as `0` when the PC initiates the tunnel |
 
 ## WireGuard Configuration (Linux)
 
