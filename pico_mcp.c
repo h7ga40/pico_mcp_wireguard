@@ -933,6 +933,10 @@ void connect_wireguard() {
 
 /* Network */
 extern uint8_t mac[6];
+static ip_addr_t g_ip;
+static ip_addr_t g_mask;
+static ip_addr_t g_gateway;
+static ip_addr_t g_dnsserver;
 
 /* LWIP */
 struct netif g_netif;
@@ -978,7 +982,12 @@ int main()
 	// Initialize LWIP in NO_SYS mode
 	lwip_init();
 
-	netif_add(&g_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL, netif_initialize, netif_input);
+    // Initialize network configuration
+    IP4_ADDR(&g_ip, 192, 168, 1, 50);
+    IP4_ADDR(&g_mask, 255, 255, 255, 0);
+    IP4_ADDR(&g_gateway, 192, 168, 1, 1);
+
+	netif_add(&g_netif, &g_ip, &g_mask, &g_gateway, NULL, netif_initialize, netif_input);
 	g_netif.name[0] = 'e';
 	g_netif.name[1] = '0';
 
@@ -991,12 +1000,14 @@ int main()
 	netif_set_link_up(&g_netif);
 	netif_set_up(&g_netif);
 
-	printf("Start DHCP configuration for an interface\n");
-
+	// Disable DHCP
+	//printf("Start DHCP configuration for an interface\n");
 	// Start DHCP configuration for an interface
-	dhcp_start(&g_netif);
+	//dhcp_start(&g_netif);
 
-	dns_init();
+	//IP4_ADDR(&dnsserver, 192,168,1,1);
+	//dns_setserver(0, &dnsserver);
+	//dns_init();
 
 	connect_wireguard();
 
