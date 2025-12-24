@@ -50,7 +50,8 @@ static uint8_t wireguard_peer_index = WIREGUARDIF_INVALID_INDEX;
 /* Port */
 #define PORT_LWIPERF 5001
 
-#define STRINGIFY(x) #x
+//#define STRINGIFY(x) #x
+#define STRINGIFY(x) x
 #define TO_STRING(x) STRINGIFY(x)
 #define SPLIT_MAC(mac) STRINGIFY(mac)
 

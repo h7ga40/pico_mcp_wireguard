@@ -269,12 +269,12 @@ def main() -> int:
 
     # Replace the requested macros in argument_definitions.h
     # - WG_PRIVATE_KEY: Pico private key
-    # - WG_PUBLIC_KEY : Pico public key
+    # - WG_PUBLIC_KEY : PC public key
     # - WG_ADDRESS / WG_SUBNET_MASK_IP / WG_GATEWAY_IP: Pico tunnel addressing
     # - WG_ENDPOINT_IP / WG_ENDPOINT_PORT: settable (may be unused for "Pico server" mode)
     replacements: Dict[str, Tuple[str, bool]] = {
         "WG_PRIVATE_KEY": (pico_kp.private_key_b64, True),
-        "WG_PUBLIC_KEY": (pico_kp.public_key_b64, True),
+        "WG_PUBLIC_KEY": (pc_kp.public_key_b64, True),
         "WG_ADDRESS": (args.wg_address, True),
         "WG_SUBNET_MASK_IP": (args.wg_subnet_mask_ip, True),
         "WG_GATEWAY_IP": (args.wg_gateway_ip, True),
