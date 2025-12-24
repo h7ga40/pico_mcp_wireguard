@@ -7,9 +7,12 @@
 #include <stdlib.h>
 
 #include "pico/stdlib.h"
-#include "hardware/flash.h"
+#include "pico/binary_info.h"
+#include "pico/critical_section.h"
 #include "pico/util/queue.h"
 #include "pico/multicore.h"
+#include "hardware/flash.h"
+#include "hardware/clocks.h"
 
 #include "bsp/board.h"
 #include "tusb.h"
@@ -36,9 +39,16 @@
 
 #include "argument_definitions.h"
 
+#define PLL_SYS_KHZ (133 * 1000)
+
 static struct netif wg_netif_struct = {0};
 static struct netif *wg_netif = NULL;
 static uint8_t wireguard_peer_index = WIREGUARDIF_INVALID_INDEX;
+
+/* Socket */
+#define SOCKET_MACRAW 0
+/* Port */
+#define PORT_LWIPERF 5001
 
 #define STRINGIFY(x) #x
 #define TO_STRING(x) STRINGIFY(x)
@@ -956,8 +966,28 @@ int loop()
 	}
 }
 
+/* Clock */
+static void set_clock_khz(void)
+{
+	// set a system clock frequency in khz
+	set_sys_clock_khz(PLL_SYS_KHZ, true);
+
+	// configure the specified clock
+	clock_configure(
+		clk_peri,
+		0,                                                // No glitchless mux
+		CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS, // System PLL on AUX mux
+		PLL_SYS_KHZ * 1000,                               // Input frequency
+		PLL_SYS_KHZ * 1000                                // Output (must be same as no divider)
+	);
+}
+
 int main()
 {
+	int8_t retval = 0;
+
+	set_clock_khz();
+
 	gpio_set_dir(26, GPIO_OUT);
 
 	stdio_init_all();
@@ -1000,6 +1030,14 @@ int main()
 	// Assign callbacks for link and status
 	netif_set_link_callback(&g_netif, netif_link_callback);
 	netif_set_status_callback(&g_netif, netif_status_callback);
+
+	// MACRAW socket open
+	retval = socket(SOCKET_MACRAW, Sn_MR_MACRAW, PORT_LWIPERF, 0x00);
+
+	if (retval < 0)
+	{
+		printf(" MACRAW socket open failed\n");
+	}
 
 	// Set the default interface and bring it up
 	netif_set_default(&g_netif);
