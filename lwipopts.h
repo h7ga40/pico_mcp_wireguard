@@ -50,6 +50,7 @@
 #define LWIP_NETIF_TX_SINGLE_PBUF   1
 #define DHCP_DOES_ARP_CHECK         0
 #define LWIP_DHCP_DOES_ACD_CHECK    0
+#define LWIP_PROVIDE_ERRNO          1
 
 #ifndef NDEBUG
 #define LWIP_DEBUG                  1
@@ -89,5 +90,8 @@
 #define LWIP_MDNS_RESPONDER 0
 #define LWIP_IGMP 1
 #define LWIP_NUM_NETIF_CLIENT_DATA (LWIP_MDNS_RESPONDER)
+#define LWIP_IP_ACCEPT_UDP_PORT(p) ((p) == PP_NTOHS(67))
+#define LWIP_RAND_WIZ() ((u32_t)rand())
+#define MEMP_NUM_SYS_TIMEOUT        40
 
 #endif /* __LWIPOPTS_H__ */

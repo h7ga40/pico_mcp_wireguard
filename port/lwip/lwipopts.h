@@ -1,3 +1,5 @@
+#include "../../lwipopts.h"
+#if 0
 /*
  * Copyright (c) 2001-2003 Swedish Institute of Computer Science.
  * All rights reserved.
@@ -76,3 +78,4 @@
 #endif
 
 #endif /* __LWIPOPTS_H__ */
+#endif
