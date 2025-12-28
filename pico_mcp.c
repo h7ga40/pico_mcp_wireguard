@@ -956,10 +956,44 @@ struct netif g_netif;
 
 int loop()
 {
+	uint8_t *pack = malloc(ETHERNET_MTU);
+	uint16_t pack_len = 0;
+	struct pbuf *p = NULL;
+	
 	http_server_init();
 	printf("HTTP server initialized.\n");
 
 	while (true) {
+		getsockopt(SOCKET_MACRAW, SO_RECVBUF, &pack_len);
+
+		if (pack_len > 0)
+		{
+			pack_len = recv_lwip(SOCKET_MACRAW, (uint8_t *)pack, pack_len);
+
+			if (pack_len)
+			{
+				p = pbuf_alloc(PBUF_RAW, pack_len, PBUF_POOL);
+				pbuf_take(p, pack, pack_len);
+				free(pack);
+
+				pack = malloc(ETHERNET_MTU);
+			}
+			else
+			{
+				printf(" No packet received\n");
+			}
+
+			if (pack_len && p != NULL)
+			{
+				LINK_STATS_INC(link.recv);
+
+				if (g_netif.input(p, &g_netif) != ERR_OK)
+				{
+					pbuf_free(p);
+				}
+			}
+		}
+
 		/* Cyclic lwIP timers check */
 		sys_check_timeouts();
 
