@@ -40,6 +40,25 @@ if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/.git")
     if(NOT GIT_SUBMOD_RESULT EQUAL 0)
         message(FATAL_ERROR "Failed to update git submodules")
     endif()
+
+    set(WIREGUARD_LWIP_PATCH ${CMAKE_CURRENT_LIST_DIR}/patches/wireguard-lwip-lwipopts.patch)
+    if(EXISTS ${WIREGUARD_LWIP_PATCH})
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} -C ${CMAKE_CURRENT_LIST_DIR}/libraries/wireguard-lwip
+                    apply --check ${WIREGUARD_LWIP_PATCH}
+            RESULT_VARIABLE WIREGUARD_LWIP_PATCH_CHECK
+        )
+        if(WIREGUARD_LWIP_PATCH_CHECK EQUAL 0)
+            execute_process(
+                COMMAND ${GIT_EXECUTABLE} -C ${CMAKE_CURRENT_LIST_DIR}/libraries/wireguard-lwip
+                        apply ${WIREGUARD_LWIP_PATCH}
+                RESULT_VARIABLE WIREGUARD_LWIP_PATCH_RESULT
+            )
+            if(NOT WIREGUARD_LWIP_PATCH_RESULT EQUAL 0)
+                message(FATAL_ERROR "Failed to apply wireguard-lwip lwipopts.h patch")
+            endif()
+        endif()
+    endif()
 endif()
 
 # Pull in Raspberry Pi Pico SDK (must be before project)

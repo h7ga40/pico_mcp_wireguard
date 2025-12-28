@@ -1,0 +1,15 @@
+diff --git a/src/lwipopts.h b/src/lwipopts.h
+index 6a2be1b..a79b2c9 100644
+--- a/src/lwipopts.h
++++ b/src/lwipopts.h
+@@ -1,3 +1,5 @@
++#include "../../../lwipopts.h"
++#if 0
+ #ifndef _LWIPOPTS_EXAMPLE_COMMONH_H
+ #define _LWIPOPTS_EXAMPLE_COMMONH_H
+ 
+@@ -73,3 +75,4 @@
+ #define DHCP_DEBUG                 LWIP_DBG_OFF
+ 
+ #endif /* __LWIPOPTS_H__ */
++#endif
