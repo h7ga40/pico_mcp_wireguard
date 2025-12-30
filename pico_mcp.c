@@ -38,6 +38,7 @@
 #include "parson.h"
 
 #include "argument_definitions.h"
+#include "usb_hid_reports.h"
 
 #define PLL_SYS_KHZ (133 * 1000)
 
@@ -494,20 +495,59 @@ void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 
 // -------------------- USB HID keyboard support --------------------
 
+enum hid_evt_type {
+	HID_EVT_KEYBOARD,
+	HID_EVT_CONSUMER,
+	HID_EVT_SYSTEM
+};
+
 typedef struct {
+	enum hid_evt_type type;
 	uint8_t modifier;
 	uint8_t keycode;
+	uint16_t usage;
+	uint8_t system_code;
 } hid_tap_evt_t;
 
 static queue_t g_hid_q;
 
 // Tap a single HID key (press then release).
-static void hid_tap(uint8_t modifier, uint8_t keycode)
+static void hid_tap_keyboard(uint8_t modifier, uint8_t keycode)
 {
-hid_tap_evt_t e = { .modifier = modifier, .keycode = keycode };
+	hid_tap_evt_t e = {
+		.type = HID_EVT_KEYBOARD,
+		.modifier = modifier,
+		.keycode = keycode,
+		.usage = 0,
+		.system_code = 0
+	};
 
-// 連打取り逃がしOK → 失敗したら捨てる
-(void)queue_try_add(&g_hid_q, &e);
+	// 連打取り逃がしOK → 失敗したら捨てる
+	(void)queue_try_add(&g_hid_q, &e);
+}
+
+static void hid_tap_consumer(uint16_t usage)
+{
+	hid_tap_evt_t e = {
+		.type = HID_EVT_CONSUMER,
+		.modifier = 0,
+		.keycode = 0,
+		.usage = usage,
+		.system_code = 0
+	};
+	(void)queue_try_add(&g_hid_q, &e);
+}
+
+static void hid_tap_system(uint8_t system_code)
+{
+	hid_tap_evt_t e = {
+		.type = HID_EVT_SYSTEM,
+		.modifier = 0,
+		.keycode = 0,
+		.usage = 0,
+		.system_code = system_code
+	};
+	(void)queue_try_add(&g_hid_q, &e);
 }
 
 enum hid_state {
@@ -520,13 +560,12 @@ static void core1_usb_main(void)
 {
 	enum hid_state state = HID_IDLE;
 	absolute_time_t now, timeout;
+	hid_tap_evt_t active = {0};
 
 	board_init();
 	tusb_init();
 
 	while (true) {
-		hid_tap_evt_t e;
-
 		// TinyUSB device task (HID)
 		tud_task();
 
@@ -535,10 +574,18 @@ static void core1_usb_main(void)
 
 		switch (state) {
 		case HID_IDLE:
-			if (queue_try_remove(&g_hid_q, &e)) {
+			if (queue_try_remove(&g_hid_q, &active)) {
 				// press
-				uint8_t keycodes[6] = { e.keycode, 0,0,0,0,0 };
-				tud_hid_keyboard_report(0, e.modifier, keycodes);
+				if (active.type == HID_EVT_KEYBOARD) {
+					uint8_t keycodes[6] = { active.keycode, 0,0,0,0,0 };
+					tud_hid_keyboard_report(REPORT_ID_KEYBOARD, active.modifier, keycodes);
+				} else if (active.type == HID_EVT_CONSUMER) {
+					uint16_t usage = active.usage;
+					tud_hid_report(REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
+				} else if (active.type == HID_EVT_SYSTEM) {
+					uint8_t system_code = active.system_code;
+					tud_hid_report(REPORT_ID_SYSTEM_CONTROL, &system_code, sizeof(system_code));
+				}
 				timeout = delayed_by_ms(now, 5); // 5ms後
 				state = HID_PRESSED;
 			}
@@ -546,8 +593,16 @@ static void core1_usb_main(void)
 		case HID_PRESSED:
 			if (absolute_time_diff_us(now, timeout) < 0)
 				break; // まだタイムアウトしていない
-			uint8_t empty[6] = { 0 };
-			tud_hid_keyboard_report(0, 0, empty);
+			if (active.type == HID_EVT_KEYBOARD) {
+				uint8_t empty[6] = { 0 };
+				tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, empty);
+			} else if (active.type == HID_EVT_CONSUMER) {
+				uint16_t usage = 0;
+				tud_hid_report(REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
+			} else if (active.type == HID_EVT_SYSTEM) {
+				uint8_t system_code = 0;
+				tud_hid_report(REPORT_ID_SYSTEM_CONTROL, &system_code, sizeof(system_code));
+			}
 			timeout = delayed_by_ms(now, 5); // 5ms後
 			state = HID_RELEASED;
 			break;
@@ -589,6 +644,22 @@ static bool map_key_string(const char *key, uint8_t *modifier, uint8_t *keycode)
 	return false;
 }
 
+static bool map_system_key_string(const char *key, uint8_t *system_code)
+{
+	if (strcasecmp(key, "Power") == 0) { *system_code = 1; return true; }
+	if (strcasecmp(key, "Sleep") == 0) { *system_code = 2; return true; }
+	return false;
+}
+
+static bool map_consumer_key_string(const char *key, uint16_t *usage)
+{
+	if (strcasecmp(key, "Mute") == 0 || strcasecmp(key, "VolumeMute") == 0) {
+		*usage = HID_USAGE_CONSUMER_MUTE;
+		return true;
+	}
+	return false;
+}
+
 static uint8_t modifier_from_name(const char *name)
 {
 	if (!name) return 0;
@@ -627,6 +698,18 @@ void handle_send_key(session_info_t *info, JSON_Object *arguments, int id)
 			}
 		}
 	} else if (key) {
+		uint8_t system_code = 0;
+		uint16_t usage = 0;
+		if (map_system_key_string(key, &system_code)) {
+			hid_tap_system(system_code);
+			response_printf(info, call_result, "\"{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"ok\\\"}\"", id);
+			return;
+		}
+		if (map_consumer_key_string(key, &usage)) {
+			hid_tap_consumer(usage);
+			response_printf(info, call_result, "\"{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"ok\\\"}\"", id);
+			return;
+		}
 		if (!map_key_string(key, &mod, &code)) {
 			response_printf(info, invalid_params, id);
 			return;
@@ -641,7 +724,7 @@ void handle_send_key(session_info_t *info, JSON_Object *arguments, int id)
 		return;
 	}
 
-	hid_tap(mod, code);
+	hid_tap_keyboard(mod, code);
 
 	// Return a minimal success payload
 	response_printf(info, call_result, "\"{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"ok\\\"}\"", id);
