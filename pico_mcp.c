@@ -300,40 +300,11 @@ const char response_202[] = "HTTP/1.1 202 Accepted"HTTP_NEWLINE
 	"Accepted"HTTP_NEWLINE
 	"0"HTTP_NEWLINE HTTP_NEWLINE;
 const char response_400[] = "HTTP/1.1 400 Bad Request"HTTP_NEWLINE HTTP_NEWLINE;
-const char response_404[] = "HTTP/1.1 404 Not Found"HTTP_NEWLINE HTTP_NEWLINE;
 const char response_405[] = "HTTP/1.1 405 Method Not Allowed"HTTP_NEWLINE
 	"Content-Length: 0"HTTP_NEWLINE
 	"Allow: GET"HTTP_NEWLINE HTTP_NEWLINE;
 
-// --- Software keyboard web page (served at "/" or "/kbd") ---
-static const char keyboard_html[] =
-"<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-"<title>Pico Remote Keyboard</title>"
-"<style>"
-"body{font-family:system-ui,sans-serif;margin:12px}h1{font-size:20px;margin:0 0 10px}.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}button{font-size:18px;padding:12px 14px}"
-"</style>"
-"<h1>Pico Remote Keyboard</h1>"
-"<div class=\"row\">"
-"<button onclick=\"k('a')\">A</button>"
-"<button onclick=\"k('b')\">B</button>"
-"<button onclick=\"k('c')\">C</button>"
-"<button onclick=\"k('Enter')\">Enter</button>"
-"<button onclick=\"k('Backspace')\">BS</button>"
-"<button onclick=\"k('Escape')\">Esc</button>"
-"</div>"
-"<div class=\"row\">"
-"<button onclick=\"combo(['CTRL','c'])\">Ctrl+C</button>"
-"<button onclick=\"combo(['CTRL','v'])\">Ctrl+V</button>"
-"<button onclick=\"combo(['CTRL','a'])\">Ctrl+A</button>"
-"</div>"
-"<script>"
-"async function rpc(name,args){"
-"const body={jsonrpc:'2.0',method:'tools/call',params:{name,arguments:args},id:1};"
-"const r=await fetch('/message',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});"
-"return r.json();}"
-"async function k(key){await rpc('send_key',{key});}"
-"async function combo(keys){await rpc('send_key',{combo:keys});}"
-"</script>";
+#include "pico_fsdata.inc"
 
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *pbuf, err_t err)
 {
@@ -685,7 +656,7 @@ static int on_method_complete(llhttp_t *parser)
 	session_info_t *info = (session_info_t *)parser;
 
 	if (strcmp(info->method, "GET") != 0 && strcmp(info->method, "POST") != 0) {
-		tcp_write(info->pcb, response_404, strlen(response_404), TCP_WRITE_FLAG_COPY);
+		tcp_write(info->pcb, file_404_html->data, file_404_html->len, TCP_WRITE_FLAG_COPY);
 		return -1; // メソッドがサポートされていない
 	}
 
@@ -812,16 +783,7 @@ static int on_message_complete(llhttp_t *parser)
 			info->request = NULL;
 			printf("Non-GET method not allowed for keyboard page\n");
 		} else {
-			char header[256];
-			int body_len = (int)strlen(keyboard_html);
-			int hdr_len = snprintf(header, sizeof(header),
-				"HTTP/1.1 200 OK"HTTP_NEWLINE
-				"Content-Type: text/html; charset=utf-8"HTTP_NEWLINE
-				"Content-Length: %d"HTTP_NEWLINE
-				"Cache-Control: no-store"HTTP_NEWLINE
-				HTTP_NEWLINE, body_len);
-			tcp_write(info->pcb, header, hdr_len, TCP_WRITE_FLAG_COPY);
-			tcp_write(info->pcb, keyboard_html, body_len, TCP_WRITE_FLAG_COPY);
+			tcp_write(info->pcb, file_keyboard_html->data, file_keyboard_html->len, TCP_WRITE_FLAG_COPY);
 			free(info->request);
 			info->request = NULL;
 		}
@@ -845,7 +807,7 @@ static int on_message_complete(llhttp_t *parser)
 		}
 		break;
 	case ENDPOINT_NOT_FOUND:
-		tcp_write(info->pcb, response_404, strlen(response_404), TCP_WRITE_FLAG_COPY);
+		tcp_write(info->pcb, file_404_html->data, file_404_html->len, TCP_WRITE_FLAG_COPY);
 		free(info->request);
 		info->request = NULL;
 		printf("Endpoint not found: %s\n", info->url);

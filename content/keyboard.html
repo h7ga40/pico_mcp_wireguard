@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pico Remote Keyboard</title>
+<style>
+    body {
+        font-family: system-ui, sans-serif;
+        margin: 12px
+    }
+
+    h1 {
+        font-size: 20px;
+        margin: 0 0 10px
+    }
+
+    .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 8px 0
+    }
+
+    button {
+        font-size: 18px;
+        padding: 12px 14px
+    }
+</style>
+<h1>Pico Remote Keyboard</h1>
+<div class="row">
+    <button onclick="k('a')">A</button>
+    <button onclick="k('b')">B</button>
+    <button onclick="k('c')">C</button>
+    <button onclick="k('Enter')">Enter</button>
+    <button onclick="k('Backspace')">BS</button>
+    <button onclick="k('Escape')">Esc</button>
+</div>
+<div class="row">
+    <button onclick="combo(['CTRL','c'])">Ctrl+C</button>
+    <button onclick="combo(['CTRL','v'])">Ctrl+V</button>
+    <button onclick="combo(['CTRL','a'])">Ctrl+A</button>
+</div>
+<script>
+    async function rpc(name, args) {
+        const body = { jsonrpc: '2.0', method: 'tools/call', params: { name, arguments: args }, id: 1 };
+        const r = await fetch('/message', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        return r.json();
+    }
+    async function k(key) { await rpc('send_key', { key }); }
+    async function combo(keys) { await rpc('send_key', { combo: keys }); }
+</script>

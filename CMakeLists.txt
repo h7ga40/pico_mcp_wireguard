@@ -117,6 +117,7 @@ pico_enable_stdio_usb(pico_mcp 0)
 target_link_libraries(pico_mcp
     pico_stdlib
     pico_multicore
+    pico_httpd_content
     hardware_spi
     hardware_dma
     tinyusb_device
@@ -153,3 +154,9 @@ pico_add_extra_outputs(pico_mcp)
 
 include(gen_wireguard_artifacts.cmake)
 add_dependencies(pico_mcp wireguard_artifacts)
+
+pico_add_library(pico_httpd_content NOFLAG)
+pico_set_lwip_httpd_content(pico_httpd_content INTERFACE
+    ${CMAKE_CURRENT_LIST_DIR}/content/404.html
+    ${CMAKE_CURRENT_LIST_DIR}/content/keyboard.html
+)
