@@ -25,9 +25,15 @@ endif()
 # ====================================================================================
 set(PICO_BOARD pico CACHE STRING "Board type")
 set(BOARD_NAME W55RP20_EVB_PICO)
+
+# Set WIZchip Clock Speed
+set(WIZCHIP_SPI_SCLK_SPEED 43)
+add_definitions(-D_WIZCHIP_SPI_SCLK_SPEED=${WIZCHIP_SPI_SCLK_SPEED})
+
 set(WIZNET_CHIP W5500)
 add_definitions(-D_WIZCHIP_=W5500)
 add_definitions(-DDEVICE_BOARD_NAME=W55RP20_EVB_PICO)
+add_definitions(-DPICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
 
 # Ensure required git submodules are present
 find_package(Git QUIET)
@@ -91,6 +97,7 @@ add_subdirectory(${PORT_DIR})
 
 # Add executable. Default name is the project name, version 0.1
 add_executable(pico_mcp 
+    runtime_init_clocks.c
     pico_mcp.c
     usb_descriptors.c
     llhttp/llhttp.c
