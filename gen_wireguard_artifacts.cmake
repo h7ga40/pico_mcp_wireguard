@@ -16,7 +16,6 @@ add_custom_command(
           --pico-listen-port 51820
           --pc-tunnel-ip "10.7.0.1"
           --pico-tunnel-ip "10.7.0.2"
-          --allowed-ips "10.7.0.2/32"
           --require-all 0
   DEPENDS
     "${CMAKE_SOURCE_DIR}/tools/gen_wireguard_artifacts.py"
