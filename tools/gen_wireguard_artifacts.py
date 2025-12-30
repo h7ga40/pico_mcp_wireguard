@@ -223,29 +223,27 @@ def write_wg0_conf(
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--outdir", default=".", help="Directory for key files and wg0.conf")
+    ap.add_argument("--outdir", default=".", help="Output directory for keys and wg0.conf")
     ap.add_argument(
         "--argument-definitions-h",
         required=True,
-        help="Path to argument_definitions.h/.in to patch and emit to outdir",
+        help="Path to argument_definitions.h/.in to patch and copy to outdir",
     )
     ap.add_argument("--wg-tool", default=None, help="Explicit path to wg.exe / wg (optional)")
-    ap.add_argument("--require-all", type=int, default=1, help="1: error if any macro missing, 0: replace what exists")
+    ap.add_argument("--require-all", type=int, default=1, help="1: error if any macro is missing, 0: replace what exists")
 
     # PC wg0.conf generation
-    ap.add_argument("--pico-lan-ip", required=True, help="Pico LAN IP (Endpoint), e.g. 192.168.1.50")
+    ap.add_argument("--pico-lan-ip", required=True, help="Pico LAN IP for the endpoint, e.g. 192.168.1.50")
     ap.add_argument("--pico-listen-port", type=int, default=51820, help="Pico WireGuard listen port")
-    ap.add_argument("--pc-tunnel-ip", default="10.7.0.1", help="PC tunnel IP (wg0 Address)")
-    ap.add_argument("--pico-tunnel-ip", default="10.7.0.2", help="Pico tunnel IP (for reference)")
-    ap.add_argument("--allowed-ips", default="10.7.0.2/32", help="AllowedIPs on PC peer side")
-    ap.add_argument("--wg0-conf", default="wg0.conf", help="Output wg0.conf filename (in outdir)")
+    ap.add_argument("--pc-tunnel-ip", default="10.7.0.1", help="PC tunnel IP for wg0 Address")
+    ap.add_argument("--pico-tunnel-ip", default="10.7.0.2", help="Pico tunnel IP")
+    ap.add_argument("--wg0-conf", default="wg0.conf", help="wg0.conf filename (written to outdir)")
 
     # Pico-side network parameters (for macros)
-    ap.add_argument("--wg-address", default="10.7.0.2", help="Value for WG_ADDRESS")
-    ap.add_argument("--wg-subnet-mask-ip", default="255.255.255.0", help="Value for WG_SUBNET_MASK_IP")
-    ap.add_argument("--wg-gateway-ip", default="0.0.0.0", help="Value for WG_GATEWAY_IP")
-    ap.add_argument("--wg-endpoint-ip", default="0.0.0.0", help="Value for WG_ENDPOINT_IP (if unused, keep 0.0.0.0)")
-    ap.add_argument("--wg-endpoint-port", default="0", help="Value for WG_ENDPOINT_PORT (if unused, keep 0)")
+    ap.add_argument("--wg-subnet-mask-ip", default="255.255.255.0", help="Pico-side subnet mask for WG_SUBNET_MASK_IP (to allow all IPs, keep 0.0.0.0)")
+    ap.add_argument("--wg-gateway-ip", default="0.0.0.0", help="Pico-side gateway IP for WG_GATEWAY_IP (to allow all IPs, keep 0.0.0.0)")
+    ap.add_argument("--wg-endpoint-ip", default="0.0.0.0", help="PC LAN IP for WG_ENDPOINT_IP (if unknown, keep 0.0.0.0)")
+    ap.add_argument("--wg-endpoint-port", default="0", help="PC WireGuard listen port for WG_ENDPOINT_PORT (if unknown, keep 0)")
 
     args = ap.parse_args()
 
@@ -275,7 +273,7 @@ def main() -> int:
     replacements: Dict[str, Tuple[str, bool]] = {
         "WG_PRIVATE_KEY": (pico_kp.private_key_b64, True),
         "WG_PUBLIC_KEY": (pc_kp.public_key_b64, True),
-        "WG_ADDRESS": (args.wg_address, True),
+        "WG_ADDRESS": (args.pico_tunnel_ip, True),
         "WG_SUBNET_MASK_IP": (args.wg_subnet_mask_ip, True),
         "WG_GATEWAY_IP": (args.wg_gateway_ip, True),
         "WG_ENDPOINT_IP": (args.wg_endpoint_ip, True),
@@ -297,7 +295,7 @@ def main() -> int:
         pc_tunnel_ip=args.pc_tunnel_ip,
         pico_lan_ip=args.pico_lan_ip,
         pico_listen_port=args.pico_listen_port,
-        allowed_ips=args.allowed_ips,
+        allowed_ips=f"{args.pico_tunnel_ip}/32",
     )
 
     print("OK")
