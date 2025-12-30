@@ -1,4 +1,4 @@
-#include <stdint.h>
+﻿#include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -510,27 +510,52 @@ hid_tap_evt_t e = { .modifier = modifier, .keycode = keycode };
 (void)queue_try_add(&g_hid_q, &e);
 }
 
+enum hid_state {
+	HID_IDLE,
+	HID_PRESSED,
+	HID_RELEASED
+};
+
 static void core1_usb_main(void)
 {
+	enum hid_state state = HID_IDLE;
+	absolute_time_t now, timeout;
+
 	board_init();
 	tusb_init();
 
 	while (true) {
+		hid_tap_evt_t e;
+
 		// TinyUSB device task (HID)
 		tud_task();
 
-		hid_tap_evt_t e;
-		while (queue_try_remove(&g_hid_q, &e)) {
-			if (!tud_hid_ready()) continue;
+		if (!tud_hid_ready()) continue;
+		now = get_absolute_time();
 
-			// press
-			uint8_t keycodes[6] = { e.keycode, 0,0,0,0,0 };
-			tud_hid_keyboard_report(0, e.modifier, keycodes);
-
-			// 連打取り逃がしOKなら、releaseは即でも良い
-			// ただしホスト依存で取りこぼしが出るなら「数ms遅延」を後述の改善で入れる
+		switch (state) {
+		case HID_IDLE:
+			if (queue_try_remove(&g_hid_q, &e)) {
+				// press
+				uint8_t keycodes[6] = { e.keycode, 0,0,0,0,0 };
+				tud_hid_keyboard_report(0, e.modifier, keycodes);
+				timeout = delayed_by_ms(now, 5); // 5ms後
+				state = HID_PRESSED;
+			}
+			break;
+		case HID_PRESSED:
+			if (absolute_time_diff_us(now, timeout) < 0)
+				break; // まだタイムアウトしていない
 			uint8_t empty[6] = { 0 };
 			tud_hid_keyboard_report(0, 0, empty);
+			timeout = delayed_by_ms(now, 5); // 5ms後
+			state = HID_RELEASED;
+			break;
+		case HID_RELEASED:
+			if (absolute_time_diff_us(now, timeout) < 0)
+				break; // まだタイムアウトしていない
+			state = HID_IDLE;
+			break;
 		}
 		tight_loop_contents();
 	}
@@ -1057,3 +1082,4 @@ int main()
 		loop();
 	}
 }
+
