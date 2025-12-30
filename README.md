@@ -65,11 +65,11 @@ Edit `argument_definitions.h` and set the macros as follows:
 | - | - | - |
 | WG_PRIVATE_KEY | `<pico.key>` | Pico private key |
 | WG_ADDRESS | `10.7.0.2` | Pico IP address |
-| WG_SUBNET_MASK_IP | `255.255.255.255` | PC subnet |
-| WG_GATEWAY_IP | `0.0.0.0` | PC IP address |
+| WG_SUBNET_MASK_IP | `255.255.255.0` | Pico subnet |
+| WG_GATEWAY_IP | `0.0.0.0` | Pico gateway address |
 | WG_PUBLIC_KEY | `<pc.pub>` | PC public key |
-| WG_ALLOWED_IP |  | Unused |
-| WG_ALLOWED_IP_MASK_IP |  | Unused |
+| WG_ALLOWED_IP | `0.0.0.0` | Allow all IPs through tunnel |
+| WG_ALLOWED_IP_MASK_IP | `0.0.0.0` | Allow all IPs through tunnel |
 | WG_ENDPOINT_IP | `0.0.0.0` | Leave as `0.0.0.0` when the PC initiates the tunnel |
 | WG_ENDPOINT_PORT | `0` | Leave as `0` when the PC initiates the tunnel |
 

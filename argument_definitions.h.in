@@ -31,11 +31,11 @@
 #endif
 
 #ifndef WG_ALLOWED_IP
-#define WG_ALLOWED_IP
+#define WG_ALLOWED_IP "0.0.0.0"
 #endif
 
 #ifndef WG_ALLOWED_IP_MASK_IP
-#define WG_ALLOWED_IP_MASK_IP
+#define WG_ALLOWED_IP_MASK_IP "0.0.0.0"
 #endif
 
 #ifndef WG_ENDPOINT_IP

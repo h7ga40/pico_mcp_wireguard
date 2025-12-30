@@ -242,7 +242,7 @@ def main() -> int:
 
     # Pico-side network parameters (for macros)
     ap.add_argument("--wg-address", default="10.7.0.2", help="Value for WG_ADDRESS")
-    ap.add_argument("--wg-subnet-mask-ip", default="255.255.255.255", help="Value for WG_SUBNET_MASK_IP")
+    ap.add_argument("--wg-subnet-mask-ip", default="255.255.255.0", help="Value for WG_SUBNET_MASK_IP")
     ap.add_argument("--wg-gateway-ip", default="0.0.0.0", help="Value for WG_GATEWAY_IP")
     ap.add_argument("--wg-endpoint-ip", default="0.0.0.0", help="Value for WG_ENDPOINT_IP (if unused, keep 0.0.0.0)")
     ap.add_argument("--wg-endpoint-port", default="0", help="Value for WG_ENDPOINT_PORT (if unused, keep 0)")

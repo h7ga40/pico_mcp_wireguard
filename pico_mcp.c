@@ -931,8 +931,8 @@ void connect_wireguard() {
 	peer.public_key = TO_STRING(WG_PUBLIC_KEY);
 	peer.preshared_key = NULL;
 	peer.keep_alive = WG_KEEPALIVE;
-	peer.allowed_ip = ipaddr;
-	peer.allowed_mask = netmask;
+	ipaddr_aton(TO_STRING(WG_ALLOWED_IP), &peer.allowed_ip);
+	ipaddr_aton(TO_STRING(WG_ALLOWED_IP_MASK_IP), &peer.allowed_mask);
 	ipaddr_aton(TO_STRING(WG_ENDPOINT_IP), &peer.endpoint_ip);
 	peer.endport_port = WG_ENDPOINT_PORT;
 
@@ -1052,7 +1052,8 @@ int main()
 	// Static IP address initialization (wg0.conf endpoint ip address)
 	IP4_ADDR(&g_ip, 192, 168, 1, 50);
 	IP4_ADDR(&g_mask, 255, 255, 255, 0);
-	IP4_ADDR(&g_gateway, 192, 168, 1, 1);
+	//IP4_ADDR(&g_gateway, 192, 168, 1, 1);
+	g_gateway = *IP4_ADDR_ANY;
 
 	netif_add(&g_netif, &g_ip, &g_mask, &g_gateway, NULL, netif_initialize, netif_input);
 	// When configuring a static IP address on a DHCP server
