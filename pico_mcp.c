@@ -575,24 +575,24 @@ static void core1_usb_main(void)
 
 		switch (state) {
 		case HID_IDLE:
-			if (queue_try_remove(&g_hid_q, &active)) {
-				// press
-				if (active.type == HID_EVT_KEYBOARD) {
-					uint8_t keycodes[6] = { active.keycode, 0,0,0,0,0 };
-					tud_hid_keyboard_report(REPORT_ID_KEYBOARD, active.modifier, keycodes);
-				} else if (active.type == HID_EVT_CONSUMER) {
-					uint16_t usage = active.usage;
-					tud_hid_report(REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
-				} else if (active.type == HID_EVT_SYSTEM) {
-					uint8_t system_code = active.system_code;
-					tud_hid_report(REPORT_ID_SYSTEM_CONTROL, &system_code, sizeof(system_code));
-				}
-				timeout = delayed_by_ms(now, 5); // 5ms後
-				state = HID_PRESSED;
+			if (!queue_try_remove(&g_hid_q, &active)) 
+				break;
+			// press
+			if (active.type == HID_EVT_KEYBOARD) {
+				uint8_t keycodes[6] = { active.keycode, 0,0,0,0,0 };
+				tud_hid_keyboard_report(REPORT_ID_KEYBOARD, active.modifier, keycodes);
+			} else if (active.type == HID_EVT_CONSUMER) {
+				uint16_t usage = active.usage;
+				tud_hid_report(REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
+			} else if (active.type == HID_EVT_SYSTEM) {
+				uint8_t system_code = active.system_code;
+				tud_hid_report(REPORT_ID_SYSTEM_CONTROL, &system_code, sizeof(system_code));
 			}
+			timeout = delayed_by_ms(now, 5); // 5ms後
+			state = HID_PRESSED;
 			break;
 		case HID_PRESSED:
-			if (absolute_time_diff_us(now, timeout) < 0)
+			if (absolute_time_diff_us(now, timeout) > 0)
 				break; // まだタイムアウトしていない
 			if (active.type == HID_EVT_KEYBOARD) {
 				uint8_t empty[6] = { 0 };
@@ -608,7 +608,7 @@ static void core1_usb_main(void)
 			state = HID_RELEASED;
 			break;
 		case HID_RELEASED:
-			if (absolute_time_diff_us(now, timeout) < 0)
+			if (absolute_time_diff_us(now, timeout) > 0)
 				break; // まだタイムアウトしていない
 			state = HID_IDLE;
 			break;
@@ -1131,9 +1131,8 @@ int main()
 		ipaddr_aton(TO_STRING(ENDPOINT_IP), &g_ip);
 		ipaddr_aton(TO_STRING(ENDPOINT_SUBNET_MASK_IP), &g_mask);
 		ipaddr_aton(TO_STRING(ENDPOINT_GATEWAY_IP), &g_gateway);
+		netif_add(&g_netif, &g_ip, &g_mask, &g_gateway, NULL, netif_initialize, netif_input);
 	}
-
-	netif_add(&g_netif, &g_ip, &g_mask, &g_gateway, NULL, netif_initialize, netif_input);
 
 	// Set interface name
 	g_netif.name[0] = 'e';
@@ -1161,9 +1160,9 @@ int main()
 		dhcp_start(&g_netif);
 	}
 
-	if (dnsserver.addr != 0) {
-		ipaddr_aton(TO_STRING(DNS_SERVER_IP), &dnsserver);
-		dns_setserver(0, &dnsserver);
+	ipaddr_aton(TO_STRING(DNS_SERVER_IP), &g_dnsserver);
+	if (g_dnsserver.addr != 0) {
+		dns_setserver(0, &g_dnsserver);
 		dns_init();
 	}
 
