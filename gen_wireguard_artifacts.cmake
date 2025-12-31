@@ -7,8 +7,6 @@ add_custom_command(
   OUTPUT
     "${WG_OUTDIR}/argument_definitions.h"
     "${WG_OUTDIR}/wg0.conf"
-    "${WG_OUTDIR}/pico.key" "${WG_OUTDIR}/pico.pub"
-    "${WG_OUTDIR}/pc.key"   "${WG_OUTDIR}/pc.pub"
   COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_wireguard_artifacts.py"
           --outdir "${WG_OUTDIR}"
           --argument-definitions-h "${ARG_DEFS}"
@@ -26,6 +24,5 @@ add_custom_command(
 add_custom_target(wireguard_artifacts ALL
   DEPENDS
     "${WG_OUTDIR}/wg0.conf"
-    "${WG_OUTDIR}/pico.key" "${WG_OUTDIR}/pico.pub"
-    "${WG_OUTDIR}/pc.key"   "${WG_OUTDIR}/pc.pub"
+    "${WG_OUTDIR}/argument_definitions.h"
 )
