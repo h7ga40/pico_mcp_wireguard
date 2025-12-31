@@ -78,6 +78,8 @@ pico_sdk_init()
 
 include(pico_wireguard_import.cmake)
 
+set(WG_IFACE_TYPE "ethernets" CACHE STRING "Interface type for net_config.yaml (wifis or ethernets)")
+
 # Set the project root directory if it's not already defined, as may happen if
 # the tests folder is included directly by a parent project, without including
 # the top level CMakeLists.txt.

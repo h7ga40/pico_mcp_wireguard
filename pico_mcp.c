@@ -45,6 +45,7 @@
 static struct netif wg_netif_struct = {0};
 static struct netif *wg_netif = NULL;
 static uint8_t wireguard_peer_index = WIREGUARDIF_INVALID_INDEX;
+static bool enable_dhcp = ENABLE_DHCP;
 
 /* Socket */
 #define SOCKET_MACRAW 0
@@ -1119,15 +1120,20 @@ int main()
 	// Initialize LWIP in NO_SYS mode
 	lwip_init();
 
-	// Static IP address initialization (wg0.conf endpoint ip address)
-	IP4_ADDR(&g_ip, 192, 168, 1, 50);
-	IP4_ADDR(&g_mask, 255, 255, 255, 0);
-	//IP4_ADDR(&g_gateway, 192, 168, 1, 1);
-	g_gateway = *IP4_ADDR_ANY;
+	if (enable_dhcp) {
+		// When configuring a static IP address on a DHCP server (wg0.conf endpoint ip address)
+		printf(" DHCP client enable\n");
+		netif_add(&g_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL, netif_initialize, netif_input);
+	}
+	else {
+		// Static IP address initialization (wg0.conf endpoint ip address)
+		printf(" Static IP address configure\n");
+		ipaddr_aton(TO_STRING(ENDPOINT_IP), &g_ip);
+		ipaddr_aton(TO_STRING(ENDPOINT_SUBNET_MASK_IP), &g_mask);
+		ipaddr_aton(TO_STRING(ENDPOINT_GATEWAY_IP), &g_gateway);
+	}
 
 	netif_add(&g_netif, &g_ip, &g_mask, &g_gateway, NULL, netif_initialize, netif_input);
-	// When configuring a static IP address on a DHCP server
-	// netif_add(&g_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL, netif_initialize, netif_input);
 
 	// Set interface name
 	g_netif.name[0] = 'e';
@@ -1150,14 +1156,16 @@ int main()
 	netif_set_link_up(&g_netif);
 	netif_set_up(&g_netif);
 
-	// Disable DHCP
-	//printf("Start DHCP configuration for an interface\n");
-	// Start DHCP configuration for an interface
-	//dhcp_start(&g_netif);
+	if (enable_dhcp) {
+		printf("Start DHCP configuration for an interface\n");
+		dhcp_start(&g_netif);
+	}
 
-	//IP4_ADDR(&dnsserver, 192,168,1,1);
-	//dns_setserver(0, &dnsserver);
-	//dns_init();
+	if (dnsserver.addr != 0) {
+		ipaddr_aton(TO_STRING(DNS_SERVER_IP), &dnsserver);
+		dns_setserver(0, &dnsserver);
+		dns_init();
+	}
 
 	connect_wireguard();
 

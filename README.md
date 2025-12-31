@@ -30,6 +30,47 @@ runs the HTTP/MCP server on port `3001`. Access the control page locally at
 
 Install WireGuard for Windows from <https://www.wireguard.com/install/>.
 
+### Generate artifacts (net_config.yaml)
+
+The `tools/gen_wireguard_artifacts.py` script requires PyYAML to read `net_config.yaml`.
+Install it before running the script:
+
+```bash
+python -m pip install pyyaml
+```
+
+Example of `net_config.yaml`
+
+```yaml
+network:
+  ethernets:
+    e0:
+      dhcp4: true
+      addresses: [ 192.168.1.50/24 ]
+      gateway4: 192.168.1.1
+      nameservers:
+        addresses: [ 192.168.1.1 ]
+  wifis:
+    wf:
+      dhcp4: true
+      access-points:
+        WIFI_SSID:
+          password: WIFI_PASSWORD
+  tunnels:
+    wg:
+      mode: wireguard
+      addresses: [ 10.7.0.2/24 ]
+      routes:
+        - to: 0.0.0.0/0
+          via: 10.7.0.1
+      peers:
+        - allowed-ips: [ 10.7.0.1/24 ]
+          endpoint: 0.0.0.0:0
+          keepalive: 0
+      mtu: 1420
+      listen-port: 51820
+```
+
 ### Generate the Pico keys
 
 Run in PowerShell:

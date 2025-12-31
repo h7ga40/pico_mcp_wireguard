@@ -6,6 +6,26 @@
 #define WIFI_PASSWORD
 #endif
 
+#ifndef ENABLE_DHCP
+#define ENABLE_DHCP
+#endif
+
+#ifndef DNS_SERVER_IP
+#define DNS_SERVER_IP
+#endif
+
+#ifndef ENDPOINT_IP
+#define ENDPOINT_IP
+#endif
+
+#ifndef ENDPOINT_SUBNET_MASK_IP
+#define ENDPOINT_SUBNET_MASK_IP
+#endif
+
+#ifndef ENDPOINT_GATEWAY_IP
+#define ENDPOINT_GATEWAY_IP
+#endif
+
 #ifndef WG_PRIVATE_KEY
 #define WG_PRIVATE_KEY
 #endif
@@ -27,15 +47,15 @@
 #endif
 
 #ifndef WG_KEEPALIVE
-#define WG_KEEPALIVE 0
+#define WG_KEEPALIVE
 #endif
 
 #ifndef WG_ALLOWED_IP
-#define WG_ALLOWED_IP "0.0.0.0"
+#define WG_ALLOWED_IP
 #endif
 
 #ifndef WG_ALLOWED_IP_MASK_IP
-#define WG_ALLOWED_IP_MASK_IP "0.0.0.0"
+#define WG_ALLOWED_IP_MASK_IP
 #endif
 
 #ifndef WG_ENDPOINT_IP
