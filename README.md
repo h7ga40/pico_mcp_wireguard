@@ -161,12 +161,12 @@ package names and service managers as needed for other distributions.
 Use `sudo wg` to verify that the tunnel is established and exchanging
 handshakes.
 
-## LED Control via JSON-RPC
+## ATX Power Switch Pulse via JSON-RPC
 
 The firmware exposes JSON-RPC tools that can be invoked using the `tools/call`
 method. Use `tools/list` to discover available tools: `set_location`,
 `set_switch_id`, and `set_switch`. These allow you to configure the target
-switch and toggle the onboard LED.
+switch and trigger a momentary ATX power switch pulse.
 
 Example requests:
 
@@ -188,9 +188,18 @@ Example requests:
   "id": 3 }
 ```
 
-Call `set_switch` with `"state": "on"` or `"off"`. The LED changes only when
-the request's `location` or `switch_id` matches the previously set values or
-when both fields are omitted.
+Call `set_switch` with `"state": "on"` or `"off"`. The value is accepted for
+compatibility but ignored; each call emits a single GPIO pulse (default 200 ms).
+The request only triggers when the `location` or `switch_id` matches the
+previously set values, or when both fields are omitted.
+
+Configure the GPIO, active level, and pulse width in `argument_definitions.h`
+via `ATX_PWR_GPIO`, `ATX_PWR_ACTIVE_LEVEL`, and `ATX_PWR_PULSE_MS`. For safety,
+use a transistor/photocoupler to isolate the Pico from the ATX PWR_SW header.
+
+`get_switch_state()` now reports the motherboard power LED state by reading an
+input GPIO. Configure it with `PWR_LED_GPIO`, `PWR_LED_ACTIVE_LEVEL`, and
+`PWR_LED_PULL` (0 = none, 1 = pull-down, 2 = pull-up).
 
 ## How it works
 

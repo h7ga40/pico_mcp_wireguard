@@ -69,3 +69,27 @@
 #ifndef TARGET_MAC
 #define TARGET_MAC
 #endif
+
+#ifndef ATX_PWR_GPIO
+#define ATX_PWR_GPIO 26
+#endif
+
+#ifndef ATX_PWR_ACTIVE_LEVEL
+#define ATX_PWR_ACTIVE_LEVEL 0
+#endif
+
+#ifndef ATX_PWR_PULSE_MS
+#define ATX_PWR_PULSE_MS 200
+#endif
+
+#ifndef PWR_LED_GPIO
+#define PWR_LED_GPIO 27
+#endif
+
+#ifndef PWR_LED_ACTIVE_LEVEL
+#define PWR_LED_ACTIVE_LEVEL 1
+#endif
+
+#ifndef PWR_LED_PULL
+#define PWR_LED_PULL 1
+#endif

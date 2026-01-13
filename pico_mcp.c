@@ -90,7 +90,8 @@ typedef struct session_info {
 // リストの先頭ポインタ
 static session_info_t *head = NULL;
 static int response_id = 1;
-static bool led_on = false;
+static critical_section_t g_pwr_pulse_cs;
+static bool g_pwr_pulse_in_progress = false;
 
 static int on_method(llhttp_t *parser, const char *at, size_t length);
 static int on_method_complete(llhttp_t *parser);
@@ -198,28 +199,40 @@ static char *get_query_value(const char *query, const char *key) {
 	return NULL; // 見つからない場合
 }
 
-static void switch_led(const char *val)
+static bool atx_power_pulse(uint32_t pulse_ms)
 {
-	if (!val) {
-		return;
+	bool do_pulse = false;
+
+	critical_section_enter_blocking(&g_pwr_pulse_cs);
+	if (!g_pwr_pulse_in_progress) {
+		g_pwr_pulse_in_progress = true;
+		do_pulse = true;
+	}
+	critical_section_exit(&g_pwr_pulse_cs);
+
+	if (!do_pulse) {
+		return false;
 	}
 
-	if (strcasecmp(val, "on") == 0) {
-		led_on = true;
-	} else if (strcasecmp(val, "off") == 0) {
-		led_on = false;
-	}
+	const bool active_level = (ATX_PWR_ACTIVE_LEVEL != 0);
+	const bool idle_level = !active_level;
 
-	gpio_put(26, led_on ? 1 : 0);
+	gpio_put(ATX_PWR_GPIO, active_level);
+	sleep_ms(pulse_ms);
+	gpio_put(ATX_PWR_GPIO, idle_level);
+
+	critical_section_enter_blocking(&g_pwr_pulse_cs);
+	g_pwr_pulse_in_progress = false;
+	critical_section_exit(&g_pwr_pulse_cs);
+
+	return true;
 }
 
 const char *get_switch_state()
 {
-	if (led_on) {
-		return "on";
-	} else {
-		return "off";
-	}
+	const bool active_level = (PWR_LED_ACTIVE_LEVEL != 0);
+	const bool level = gpio_get(PWR_LED_GPIO);
+	return (level == active_level) ? "on" : "off";
 }
 
 static void session_info_free(session_info_t *info)
@@ -411,6 +424,7 @@ int response_printf(session_info_t *info, const char *format, ...)
 const char invalid_request[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}";
 const char method_not_found[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
 const char location_not_configured[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32001, \"message\": \"Location not configured\"}, \"id\": %d}";
+const char switch_busy[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32002, \"message\": \"Busy\"}, \"id\": %d}";
 const char unknown_tool[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Unknown tool\"}}";
 const char invalid_protocol[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Invalid protocol version\"}}";
 const char invalid_context[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid context\"}, \"id\": %d}";
@@ -420,7 +434,7 @@ const char parse_error[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-
 
 const char resource[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"logging\":{},\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Raspberry Pi Pico Smart Home\",\"description\":\"A smart home system based on Raspberry Pi Pico.\",\"version\":\"1.0.0.0\"}}}";
 const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":["
-		"{\"name\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Use this to toggle a light or other switch ON or OFF.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"state\"]}},"
+		"{\"name\":\"set_switch\",\"description\":\"Trigger a momentary ATX power switch pulse (state is accepted but ignored).\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Trigger a momentary ATX power switch pulse (state is accepted but ignored).\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"state\"]}},"
 		"{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"location\"]}},"
 		"{\"name\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"inputSchema\":{\"title\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\"]}},"
 		"{\"name\":\"send_key\",\"description\":\"Send a USB HID key press.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\"},\"combo\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}}}}"
@@ -483,10 +497,14 @@ void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 	if ((location && strcmp(location, context.location) == 0)
 		|| (switch_id && strcmp(switch_id, context.switch_id) == 0)
 		|| (!location && !switch_id)) {
-		switch_led(state);
+		(void)state;
+		if (!atx_power_pulse(ATX_PWR_PULSE_MS)) {
+			response_printf(info, switch_busy, id);
+			return;
+		}
 		char content[256];
-		sprintf(content, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"state\":\"%s\"}",
-			context.switch_id, context.location, get_switch_state());
+		sprintf(content, "{\"switch_id\":\"%s\",\"location\":\"%s\",\"result\":\"pulse triggered\"}",
+			context.switch_id, context.location);
 		response_printf(info, call_result, content, id);
 	}
 	else {
@@ -1094,7 +1112,22 @@ int main()
 
 	set_clock_khz();
 
-	gpio_set_dir(26, GPIO_OUT);
+	critical_section_init(&g_pwr_pulse_cs);
+
+	gpio_init(ATX_PWR_GPIO);
+	gpio_set_dir(ATX_PWR_GPIO, GPIO_OUT);
+	gpio_put(ATX_PWR_GPIO, ATX_PWR_ACTIVE_LEVEL ? 0 : 1);
+	// NOTE: Use a transistor/photocoupler for isolation when wiring to ATX PWR_SW.
+
+	gpio_init(PWR_LED_GPIO);
+	gpio_set_dir(PWR_LED_GPIO, GPIO_IN);
+	if (PWR_LED_PULL == 1) {
+		gpio_pull_down(PWR_LED_GPIO);
+	} else if (PWR_LED_PULL == 2) {
+		gpio_pull_up(PWR_LED_GPIO);
+	} else {
+		gpio_disable_pulls(PWR_LED_GPIO);
+	}
 
 	stdio_init_all();
 

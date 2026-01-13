@@ -102,3 +102,14 @@ sudo apt install wireguard wireguard-tools
 sudo wg-quick up wg0
 sudo systemctl enable wg-quick@wg0
 ```
+
+## ATX 電源スイッチ / 電源 LED
+
+`set_switch` は ATX の PWR_SW に相当するワンショットパルスを出力します。
+GPIO 番号 / アクティブレベル / パルス幅は `argument_definitions.h` の
+`ATX_PWR_GPIO`、`ATX_PWR_ACTIVE_LEVEL`、`ATX_PWR_PULSE_MS` で変更できます。
+
+`get_switch_state()` はマザーボードの電源 LED ピン入力を読み取り、
+`on`/`off` を返します。入力 GPIO とレベル・プル設定は
+`PWR_LED_GPIO`、`PWR_LED_ACTIVE_LEVEL`、`PWR_LED_PULL`
+(0 = なし, 1 = Pull-Down, 2 = Pull-Up) を使って設定してください。
