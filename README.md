@@ -201,6 +201,22 @@ use a transistor/photocoupler to isolate the Pico from the ATX PWR_SW header.
 input GPIO. Configure it with `PWR_LED_GPIO`, `PWR_LED_ACTIVE_LEVEL`, and
 `PWR_LED_PULL` (0 = none, 1 = pull-down, 2 = pull-up).
 
+## Wake on LAN (WoL)
+
+The firmware can send Wake-on-LAN magic packets over the Ethernet interface and
+optionally probe ARP to confirm reachability. The WoL UI is intended to be used
+through the WireGuard tunnel (e.g. `http://10.7.0.2:3001/wol`).
+
+- Allowlist lives in `content/wol_allowlist.json` and is served at
+  `GET /wol_allowlist.json`. Only allowlisted MAC/IP pairs are accepted.
+- Web UI: `GET /wol` with POST endpoints:
+  - `POST /wol/send` `{ "mac": "...", "port": 7|9, "broadcast_ip": "..." }`
+  - `POST /wol/probe` `{ "ip": "...", "timeout_ms": 1000 }`
+  - `POST /wol/send_and_probe` `{ "mac": "...", "ip": "...", "port": 7|9 }`
+- MCP tools: `wol_send`, `arp_probe`, and `wol_send_and_probe`.
+- Rate limiting is enabled (default 30s). Adjust with `WOL_RATE_LIMIT_MS`.
+- Default ARP probe timeout is `WOL_ARP_DEFAULT_TIMEOUT_MS` (ms).
+
 ## How it works
 
 Use the agent mode of GitHub Copilot Chat in Visual Studio Code.

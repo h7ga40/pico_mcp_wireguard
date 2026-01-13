@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pico WoL</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 12px;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 10px;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 8px 0;
+      align-items: center;
+    }
+    label {
+      min-width: 90px;
+    }
+    input, select, button {
+      font-size: 14px;
+      padding: 6px 8px;
+    }
+    input {
+      width: 220px;
+    }
+    .result {
+      margin-top: 10px;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      background: #f3f3f3;
+      padding: 8px;
+      border: 1px solid #ddd;
+    }
+    .note {
+      color: #444;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Wake on LAN</h1>
+  <div class="row">
+    <label for="allowlist">Allowlist</label>
+    <select id="allowlist"></select>
+  </div>
+  <div class="row">
+    <label for="mac">MAC</label>
+    <input id="mac" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+  </div>
+  <div class="row">
+    <label for="ip">IP</label>
+    <input id="ip" type="text" placeholder="192.168.11.10">
+  </div>
+  <div class="row">
+    <label for="port">UDP Port</label>
+    <select id="port">
+      <option value="9" selected>9</option>
+      <option value="7">7</option>
+    </select>
+  </div>
+  <div class="row">
+    <button id="send">Send WoL</button>
+    <button id="probe">ARP Probe</button>
+    <button id="sendProbe">Send + Probe</button>
+  </div>
+  <div class="note">Allowlist only. Operations are validated and rate limited on device.</div>
+  <div class="result" id="result">ready</div>
+  <script>
+    const allowlistSelect = document.getElementById('allowlist');
+    const macInput = document.getElementById('mac');
+    const ipInput = document.getElementById('ip');
+    const portSelect = document.getElementById('port');
+    const result = document.getElementById('result');
+
+    function setResult(obj) {
+      result.textContent = JSON.stringify(obj, null, 2);
+    }
+
+    async function loadAllowlist() {
+      const res = await fetch('/wol_allowlist.json');
+      const list = await res.json();
+      allowlistSelect.innerHTML = '';
+      const empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '-- select --';
+      allowlistSelect.appendChild(empty);
+      list.forEach((entry, idx) => {
+        const opt = document.createElement('option');
+        opt.value = String(idx);
+        opt.textContent = entry.name || entry.mac || entry.ip || `entry-${idx}`;
+        opt.dataset.mac = entry.mac || '';
+        opt.dataset.ip = entry.ip || '';
+        allowlistSelect.appendChild(opt);
+      });
+    }
+
+    allowlistSelect.addEventListener('change', () => {
+      const opt = allowlistSelect.selectedOptions[0];
+      if (!opt || !opt.dataset) return;
+      if (opt.dataset.mac) macInput.value = opt.dataset.mac;
+      if (opt.dataset.ip) ipInput.value = opt.dataset.ip;
+    });
+
+    async function postJson(url, body) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      return res.json();
+    }
+
+    document.getElementById('send').addEventListener('click', async () => {
+      const body = { mac: macInput.value, port: Number(portSelect.value) };
+      setResult(await postJson('/wol/send', body));
+    });
+
+    document.getElementById('probe').addEventListener('click', async () => {
+      const body = { ip: ipInput.value };
+      setResult(await postJson('/wol/probe', body));
+    });
+
+    document.getElementById('sendProbe').addEventListener('click', async () => {
+      const body = { mac: macInput.value, ip: ipInput.value, port: Number(portSelect.value) };
+      setResult(await postJson('/wol/send_and_probe', body));
+    });
+
+    loadAllowlist().catch(err => setResult({ ok: false, error: String(err) }));
+  </script>
+</body>
+</html>

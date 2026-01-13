@@ -93,3 +93,11 @@
 #ifndef PWR_LED_PULL
 #define PWR_LED_PULL 1
 #endif
+
+#ifndef WOL_RATE_LIMIT_MS
+#define WOL_RATE_LIMIT_MS 30000
+#endif
+
+#ifndef WOL_ARP_DEFAULT_TIMEOUT_MS
+#define WOL_ARP_DEFAULT_TIMEOUT_MS 1000
+#endif

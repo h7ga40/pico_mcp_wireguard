@@ -5,6 +5,7 @@
 #include <strings.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 #include "pico/stdlib.h"
 #include "pico/binary_info.h"
@@ -28,9 +29,11 @@
 #include "lwip/netif.h"
 #include "lwip/timeouts.h"
 
+#include "lwip/apps/fs.h"
 #include "lwip/apps/lwiperf.h"
 #include "lwip/etharp.h"
 #include "lwip/tcp.h"
+#include "lwip/udp.h"
 #include "lwip/dhcp.h"
 #include "lwip/dns.h"
 
@@ -62,6 +65,15 @@ static bool enable_dhcp = ENABLE_DHCP;
 #define HTTP_NEWLINE "\r\n"
 #define SSE_NEWLINE "\n"
 #define SSE_SEPARATOR "\n"
+#define WOL_MAGIC_PACKET_LEN 102
+
+#ifndef WOL_RATE_LIMIT_MS
+#define WOL_RATE_LIMIT_MS 30000
+#endif
+
+#ifndef WOL_ARP_DEFAULT_TIMEOUT_MS
+#define WOL_ARP_DEFAULT_TIMEOUT_MS 1000
+#endif
 
 enum endpoint_type {
 	ENDPOINT_NONE,
@@ -69,6 +81,11 @@ enum endpoint_type {
 	ENDPOINT_MESSAGE,
 	ENDPOINT_EVENT,
 	ENDPOINT_KBD,
+	ENDPOINT_WOL,
+	ENDPOINT_WOL_ALLOWLIST,
+	ENDPOINT_WOL_SEND,
+	ENDPOINT_WOL_PROBE,
+	ENDPOINT_WOL_SEND_AND_PROBE,
 	ENDPOINT_NOT_FOUND
 };
 
@@ -92,6 +109,8 @@ static session_info_t *head = NULL;
 static int response_id = 1;
 static critical_section_t g_pwr_pulse_cs;
 static bool g_pwr_pulse_in_progress = false;
+static absolute_time_t g_wol_last_sent;
+static bool g_wol_last_sent_valid = false;
 
 static int on_method(llhttp_t *parser, const char *at, size_t length);
 static int on_method_complete(llhttp_t *parser);
@@ -197,6 +216,576 @@ static char *get_query_value(const char *query, const char *key) {
 
 	free(query_copy);
 	return NULL; // 見つからない場合
+}
+
+extern const struct fsdata_file file_wol_allowlist_json[];
+static const struct fsdata_file *wol_allowlist_file = file_wol_allowlist_json;
+
+static bool wol_get_allowlist_json(const char **out_json, size_t *out_len)
+{
+	if (!wol_allowlist_file || !wol_allowlist_file->data || wol_allowlist_file->len <= 0) {
+		return false;
+	}
+
+	const unsigned char *data = wol_allowlist_file->data;
+	int len = wol_allowlist_file->len;
+	const unsigned char *body = data;
+	int header_end = -1;
+
+	for (int i = 0; i + 3 < len; i++) {
+		if (data[i] == '\r' && data[i + 1] == '\n' &&
+			data[i + 2] == '\r' && data[i + 3] == '\n') {
+			header_end = i + 4;
+			break;
+		}
+	}
+
+	if (header_end >= 0 && header_end < len) {
+		body = data + header_end;
+		len -= header_end;
+	}
+
+	*out_json = (const char *)body;
+	*out_len = (size_t)len;
+	return true;
+}
+
+static bool wol_parse_mac(const char *mac_str, uint8_t out_mac[6])
+{
+	if (!mac_str) return false;
+
+	char hexbuf[13] = { 0 };
+	int hexlen = 0;
+
+	for (const char *p = mac_str; *p; p++) {
+		if (isxdigit((unsigned char)*p)) {
+			if (hexlen >= 12) return false;
+			hexbuf[hexlen++] = (char)toupper((unsigned char)*p);
+		} else if (*p == ':' || *p == '-') {
+			continue;
+		} else {
+			return false;
+		}
+	}
+
+	if (hexlen != 12) return false;
+
+	for (int i = 0; i < 6; i++) {
+		char hi = hexbuf[i * 2];
+		char lo = hexbuf[i * 2 + 1];
+		int h = (hi >= 'A') ? (hi - 'A' + 10) : (hi - '0');
+		int l = (lo >= 'A') ? (lo - 'A' + 10) : (lo - '0');
+		out_mac[i] = (uint8_t)((h << 4) | l);
+	}
+
+	return true;
+}
+
+static bool wol_rate_limited(uint32_t *retry_ms_out)
+{
+	if (!g_wol_last_sent_valid) return false;
+
+	absolute_time_t now = get_absolute_time();
+	int64_t diff_us = absolute_time_diff_us(g_wol_last_sent, now);
+	if (diff_us < 0) diff_us = 0;
+
+	int64_t limit_us = (int64_t)WOL_RATE_LIMIT_MS * 1000;
+	if (diff_us >= limit_us) return false;
+
+	if (retry_ms_out) {
+		*retry_ms_out = (uint32_t)((limit_us - diff_us + 999) / 1000);
+	}
+	return true;
+}
+
+static void wol_mark_sent(void)
+{
+	g_wol_last_sent = get_absolute_time();
+	g_wol_last_sent_valid = true;
+}
+
+static void wol_default_broadcast_ip(ip_addr_t *out_ip)
+{
+	ip4_addr_t ip4 = *netif_ip4_addr(&g_netif);
+	ip4_addr_t mask4 = *netif_ip4_netmask(&g_netif);
+
+	if (ip4_addr_isany_val(ip4) || ip4_addr_isany_val(mask4)) {
+		ipaddr_aton("255.255.255.255", out_ip);
+		return;
+	}
+
+	ip4_addr_t bcast;
+	bcast.addr = ip4.addr | ~mask4.addr;
+	ip_addr_copy_from_ip4(*out_ip, bcast);
+}
+
+static bool wol_send_magic_packet(const uint8_t mac[6], const ip_addr_t *dst_ip, uint16_t port)
+{
+	struct udp_pcb *pcb = udp_new();
+	if (!pcb) return false;
+
+	udp_set_flags(pcb, UDP_FLAGS_BROADCAST);
+
+	struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, WOL_MAGIC_PACKET_LEN, PBUF_RAM);
+	if (!p) {
+		udp_remove(pcb);
+		return false;
+	}
+
+	uint8_t *payload = (uint8_t *)p->payload;
+	memset(payload, 0xFF, 6);
+	for (int i = 0; i < 16; i++) {
+		memcpy(payload + 6 + (i * 6), mac, 6);
+	}
+
+	err_t err = udp_sendto_if(pcb, p, dst_ip, port, &g_netif);
+	pbuf_free(p);
+	udp_remove(pcb);
+
+	return (err == ERR_OK);
+}
+
+static bool wol_arp_probe_internal(const ip_addr_t *ip, uint32_t timeout_ms, const char **reason_out)
+{
+	if (!netif_is_up(&g_netif) || !netif_is_link_up(&g_netif)) {
+		if (reason_out) *reason_out = "netif down";
+		return false;
+	}
+
+	err_t req_err = etharp_request(&g_netif, ip_2_ip4(ip));
+	if (req_err != ERR_OK) {
+		if (reason_out) *reason_out = "request failed";
+		return false;
+	}
+
+	absolute_time_t start = get_absolute_time();
+	while (absolute_time_diff_us(start, get_absolute_time()) < (int64_t)timeout_ms * 1000) {
+		struct eth_addr *eth_ret = NULL;
+		const ip4_addr_t *ip_ret = NULL;
+		if (etharp_find_addr(&g_netif, ip_2_ip4(ip), &eth_ret, &ip_ret) >= 0) {
+			if (reason_out) *reason_out = NULL;
+			return true;
+		}
+		sleep_ms(10);
+	}
+
+	if (reason_out) *reason_out = "timeout";
+	return false;
+}
+
+static bool wol_allowlist_match(const char *mac_str, const char *ip_str, bool require_pair, char *err, size_t err_len)
+{
+	uint8_t mac[6] = { 0 };
+	ip_addr_t ip;
+	bool has_mac = false;
+	bool has_ip = false;
+
+	if (mac_str && mac_str[0] != '\0') {
+		if (!wol_parse_mac(mac_str, mac)) {
+			snprintf(err, err_len, "invalid mac");
+			return false;
+		}
+		has_mac = true;
+	}
+
+	if (ip_str && ip_str[0] != '\0') {
+		if (!ipaddr_aton(ip_str, &ip)) {
+			snprintf(err, err_len, "invalid ip");
+			return false;
+		}
+		has_ip = true;
+	}
+
+	if (require_pair && (!has_mac || !has_ip)) {
+		snprintf(err, err_len, "missing fields");
+		return false;
+	}
+
+	if (!has_mac && !has_ip) {
+		snprintf(err, err_len, "missing fields");
+		return false;
+	}
+
+	const char *json_data = NULL;
+	size_t json_len = 0;
+	if (!wol_get_allowlist_json(&json_data, &json_len) || json_len == 0) {
+		snprintf(err, err_len, "allowlist unavailable");
+		return false;
+	}
+
+	char *json_buf = malloc(json_len + 1);
+	if (!json_buf) {
+		snprintf(err, err_len, "no memory");
+		return false;
+	}
+	memcpy(json_buf, json_data, json_len);
+	json_buf[json_len] = '\0';
+
+	JSON_Value *val = json_parse_string(json_buf);
+	free(json_buf);
+	if (!val) {
+		snprintf(err, err_len, "allowlist parse error");
+		return false;
+	}
+
+	JSON_Array *arr = json_value_get_array(val);
+	if (!arr) {
+		json_value_free(val);
+		snprintf(err, err_len, "allowlist invalid");
+		return false;
+	}
+
+	bool require_both = require_pair || (has_mac && has_ip);
+
+	for (size_t i = 0; i < json_array_get_count(arr); i++) {
+		JSON_Object *entry = json_array_get_object(arr, i);
+		if (!entry) continue;
+
+		const char *entry_mac_str = json_object_get_string(entry, "mac");
+		const char *entry_ip_str = json_object_get_string(entry, "ip");
+
+		bool mac_ok = true;
+		bool ip_ok = true;
+
+		if (has_mac) {
+			uint8_t entry_mac[6] = { 0 };
+			if (!entry_mac_str || !wol_parse_mac(entry_mac_str, entry_mac)) {
+				mac_ok = false;
+			} else if (memcmp(entry_mac, mac, 6) != 0) {
+				mac_ok = false;
+			}
+		}
+
+		if (has_ip) {
+			ip_addr_t entry_ip;
+			if (!entry_ip_str || !ipaddr_aton(entry_ip_str, &entry_ip)) {
+				ip_ok = false;
+			} else if (!ip_addr_cmp(&entry_ip, &ip)) {
+				ip_ok = false;
+			}
+		}
+
+		if (require_both) {
+			if (mac_ok && ip_ok) {
+				json_value_free(val);
+				return true;
+			}
+		} else {
+			if ((has_mac && mac_ok) || (has_ip && ip_ok)) {
+				json_value_free(val);
+				return true;
+			}
+		}
+	}
+
+	json_value_free(val);
+	snprintf(err, err_len, "not allowed");
+	return false;
+}
+
+static void http_send_json(session_info_t *info, int status_code, const char *json_body)
+{
+	const char *status = "200 OK";
+	if (status_code == 400) status = "400 Bad Request";
+	else if (status_code == 403) status = "403 Forbidden";
+	else if (status_code == 404) status = "404 Not Found";
+	else if (status_code == 405) status = "405 Method Not Allowed";
+	else if (status_code == 429) status = "429 Too Many Requests";
+
+	int body_len = (int)strlen(json_body);
+	char header[160];
+	int header_len = snprintf(header, sizeof(header),
+		"HTTP/1.1 %s\r\n"
+		"Content-Type: application/json\r\n"
+		"Content-Length: %d\r\n"
+		"Connection: close\r\n\r\n",
+		status, body_len);
+
+	tcp_write(info->pcb, header, header_len, TCP_WRITE_FLAG_COPY);
+	tcp_write(info->pcb, json_body, body_len, TCP_WRITE_FLAG_COPY);
+}
+
+static bool wol_get_port_from_json(JSON_Object *obj, uint16_t *port_out, char *err, size_t err_len)
+{
+	uint16_t port = 9;
+	if (json_object_has_value_of_type(obj, "port", JSONNumber)) {
+		double p = json_object_get_number(obj, "port");
+		if (p != 7 && p != 9) {
+			snprintf(err, err_len, "invalid port");
+			return false;
+		}
+		port = (uint16_t)p;
+	}
+	*port_out = port;
+	return true;
+}
+
+static uint32_t wol_get_timeout_from_json(JSON_Object *obj)
+{
+	if (json_object_has_value_of_type(obj, "timeout_ms", JSONNumber)) {
+		double t = json_object_get_number(obj, "timeout_ms");
+		if (t >= 0) {
+			return (uint32_t)t;
+		}
+	}
+	return WOL_ARP_DEFAULT_TIMEOUT_MS;
+}
+
+static bool wol_send_core(const char *mac_str, const char *broadcast_ip_str, uint16_t port, char *err, size_t err_len)
+{
+	if (port != 7 && port != 9) {
+		snprintf(err, err_len, "invalid port");
+		return false;
+	}
+
+	if (!wol_allowlist_match(mac_str, NULL, false, err, err_len)) {
+		return false;
+	}
+
+	uint32_t retry_ms = 0;
+	if (wol_rate_limited(&retry_ms)) {
+		snprintf(err, err_len, "rate limited (%ums)", (unsigned int)retry_ms);
+		return false;
+	}
+
+	uint8_t mac[6] = { 0 };
+	if (!wol_parse_mac(mac_str, mac)) {
+		snprintf(err, err_len, "invalid mac");
+		return false;
+	}
+
+	ip_addr_t dst_ip;
+	if (broadcast_ip_str && broadcast_ip_str[0] != '\0') {
+		if (!ipaddr_aton(broadcast_ip_str, &dst_ip)) {
+			snprintf(err, err_len, "invalid broadcast ip");
+			return false;
+		}
+	} else {
+		wol_default_broadcast_ip(&dst_ip);
+	}
+
+	if (!wol_send_magic_packet(mac, &dst_ip, port)) {
+		snprintf(err, err_len, "send failed");
+		return false;
+	}
+
+	wol_mark_sent();
+	return true;
+}
+
+static bool wol_arp_probe_core(const char *ip_str, uint32_t timeout_ms, bool *arp_ok_out, const char **reason_out, char *err, size_t err_len)
+{
+	if (!wol_allowlist_match(NULL, ip_str, false, err, err_len)) {
+		return false;
+	}
+
+	ip_addr_t ip;
+	if (!ipaddr_aton(ip_str, &ip)) {
+		snprintf(err, err_len, "invalid ip");
+		return false;
+	}
+
+	if (timeout_ms == 0) {
+		timeout_ms = WOL_ARP_DEFAULT_TIMEOUT_MS;
+	}
+
+	bool ok = wol_arp_probe_internal(&ip, timeout_ms, reason_out);
+	if (arp_ok_out) *arp_ok_out = ok;
+	return true;
+}
+
+static bool wol_send_and_probe_core(const char *mac_str, const char *ip_str, const char *broadcast_ip_str,
+	uint16_t port, uint32_t timeout_ms, bool *arp_ok_out, const char **reason_out, char *err, size_t err_len)
+{
+	if (!wol_allowlist_match(mac_str, ip_str, true, err, err_len)) {
+		return false;
+	}
+
+	if (!wol_send_core(mac_str, broadcast_ip_str, port, err, err_len)) {
+		return false;
+	}
+
+	return wol_arp_probe_core(ip_str, timeout_ms, arp_ok_out, reason_out, err, err_len);
+}
+
+static void wol_http_send(session_info_t *info)
+{
+	bool free_request = true;
+	if (strcmp(info->method, "POST") != 0) {
+		http_send_json(info, 405, "{\"ok\":false,\"error\":\"method not allowed\"}");
+		goto cleanup;
+	}
+
+	if (!info->request || strlen(info->request) == 0) {
+		http_send_json(info, 400, "{\"ok\":false,\"error\":\"missing body\"}");
+		goto cleanup;
+	}
+
+	JSON_Value *val = json_parse_string(info->request);
+	if (!val) {
+		http_send_json(info, 400, "{\"ok\":false,\"error\":\"invalid json\"}");
+		goto cleanup;
+	}
+
+	JSON_Object *obj = json_value_get_object(val);
+	if (!obj) {
+		json_value_free(val);
+		http_send_json(info, 400, "{\"ok\":false,\"error\":\"invalid json\"}");
+		goto cleanup;
+	}
+	const char *mac = json_object_get_string(obj, "mac");
+	const char *broadcast_ip = json_object_get_string(obj, "broadcast_ip");
+	uint16_t port = 9;
+	char err[64] = { 0 };
+	bool ok = false;
+
+	if (mac && wol_get_port_from_json(obj, &port, err, sizeof(err))) {
+		ok = wol_send_core(mac, broadcast_ip, port, err, sizeof(err));
+	} else if (!mac) {
+		snprintf(err, sizeof(err), "missing fields");
+	}
+
+	if (ok) {
+		http_send_json(info, 200, "{\"ok\":true}");
+	} else {
+		char body[128];
+		snprintf(body, sizeof(body), "{\"ok\":false,\"error\":\"%s\"}", err[0] ? err : "failed");
+		http_send_json(info, (strncmp(err, "not allowed", 11) == 0) ? 403 : 400, body);
+	}
+
+	json_value_free(val);
+cleanup:
+	if (free_request && info->request) {
+		free(info->request);
+		info->request = NULL;
+	}
+}
+
+static void wol_http_probe(session_info_t *info)
+{
+	bool free_request = true;
+	if (strcmp(info->method, "POST") != 0) {
+		http_send_json(info, 405, "{\"checked\":false,\"error\":\"method not allowed\"}");
+		goto cleanup;
+	}
+
+	if (!info->request || strlen(info->request) == 0) {
+		http_send_json(info, 400, "{\"checked\":false,\"error\":\"missing body\"}");
+		goto cleanup;
+	}
+
+	JSON_Value *val = json_parse_string(info->request);
+	if (!val) {
+		http_send_json(info, 400, "{\"checked\":false,\"error\":\"invalid json\"}");
+		goto cleanup;
+	}
+
+	JSON_Object *obj = json_value_get_object(val);
+	if (!obj) {
+		json_value_free(val);
+		http_send_json(info, 400, "{\"checked\":false,\"error\":\"invalid json\"}");
+		goto cleanup;
+	}
+	const char *ip = json_object_get_string(obj, "ip");
+	uint32_t timeout_ms = wol_get_timeout_from_json(obj);
+	char err[64] = { 0 };
+	const char *reason = NULL;
+	bool arp_ok = false;
+
+	if (ip) {
+		if (wol_arp_probe_core(ip, timeout_ms, &arp_ok, &reason, err, sizeof(err))) {
+			char body[160];
+			if (arp_ok) {
+				snprintf(body, sizeof(body), "{\"checked\":true,\"arp_ok\":true}");
+			} else {
+				snprintf(body, sizeof(body), "{\"checked\":true,\"arp_ok\":false,\"reason\":\"%s\"}", reason ? reason : "timeout");
+			}
+			http_send_json(info, 200, body);
+		} else {
+			char body[128];
+			snprintf(body, sizeof(body), "{\"checked\":false,\"error\":\"%s\"}", err[0] ? err : "failed");
+			http_send_json(info, (strncmp(err, "not allowed", 11) == 0) ? 403 : 400, body);
+		}
+	} else {
+		http_send_json(info, 400, "{\"checked\":false,\"error\":\"missing fields\"}");
+	}
+
+	json_value_free(val);
+cleanup:
+	if (free_request && info->request) {
+		free(info->request);
+		info->request = NULL;
+	}
+}
+
+static void wol_http_send_and_probe(session_info_t *info)
+{
+	bool free_request = true;
+	if (strcmp(info->method, "POST") != 0) {
+		http_send_json(info, 405, "{\"wol_sent\":false,\"error\":\"method not allowed\"}");
+		goto cleanup;
+	}
+
+	if (!info->request || strlen(info->request) == 0) {
+		http_send_json(info, 400, "{\"wol_sent\":false,\"error\":\"missing body\"}");
+		goto cleanup;
+	}
+
+	JSON_Value *val = json_parse_string(info->request);
+	if (!val) {
+		http_send_json(info, 400, "{\"wol_sent\":false,\"error\":\"invalid json\"}");
+		goto cleanup;
+	}
+
+	JSON_Object *obj = json_value_get_object(val);
+	if (!obj) {
+		json_value_free(val);
+		http_send_json(info, 400, "{\"wol_sent\":false,\"error\":\"invalid json\"}");
+		goto cleanup;
+	}
+	const char *mac = json_object_get_string(obj, "mac");
+	const char *ip = json_object_get_string(obj, "ip");
+	const char *broadcast_ip = json_object_get_string(obj, "broadcast_ip");
+	uint16_t port = 9;
+	uint32_t timeout_ms = wol_get_timeout_from_json(obj);
+	char err[64] = { 0 };
+
+	if (!mac || !ip) {
+		http_send_json(info, 400, "{\"wol_sent\":false,\"error\":\"missing fields\"}");
+		json_value_free(val);
+		goto cleanup;
+	}
+
+	if (!wol_get_port_from_json(obj, &port, err, sizeof(err))) {
+		char body[128];
+		snprintf(body, sizeof(body), "{\"wol_sent\":false,\"error\":\"%s\"}", err);
+		http_send_json(info, 400, body);
+		json_value_free(val);
+		goto cleanup;
+	}
+
+	const char *reason = NULL;
+	bool arp_ok = false;
+	if (wol_send_and_probe_core(mac, ip, broadcast_ip, port, timeout_ms, &arp_ok, &reason, err, sizeof(err))) {
+		char body[180];
+		if (arp_ok) {
+			snprintf(body, sizeof(body), "{\"wol_sent\":true,\"arp_checked\":true,\"arp_ok\":true}");
+		} else {
+			snprintf(body, sizeof(body), "{\"wol_sent\":true,\"arp_checked\":true,\"arp_ok\":false,\"reason\":\"%s\"}", reason ? reason : "timeout");
+		}
+		http_send_json(info, 200, body);
+	} else {
+		char body[128];
+		snprintf(body, sizeof(body), "{\"wol_sent\":false,\"error\":\"%s\"}", err[0] ? err : "failed");
+		http_send_json(info, (strncmp(err, "not allowed", 11) == 0) ? 403 : 400, body);
+	}
+
+	json_value_free(val);
+cleanup:
+	if (free_request && info->request) {
+		free(info->request);
+		info->request = NULL;
+	}
 }
 
 static bool atx_power_pulse(uint32_t pulse_ms)
@@ -437,7 +1026,10 @@ const char tool_list[] = "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"tools\":[
 		"{\"name\":\"set_switch\",\"description\":\"Trigger a momentary ATX power switch pulse (state is accepted but ignored).\",\"inputSchema\":{\"title\":\"set_switch\",\"description\":\"Trigger a momentary ATX power switch pulse (state is accepted but ignored).\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"},\"state\":{\"type\":\"string\",\"enum\":[\"on\",\"off\"]}},\"required\":[\"state\"]}},"
 		"{\"name\":\"set_location\",\"description\":\"Set the location of the switch.\",\"inputSchema\":{\"title\":\"set_location\",\"description\":\"Set the location of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"location\"]}},"
 		"{\"name\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"inputSchema\":{\"title\":\"set_switch_id\",\"description\":\"Set the ID of the switch.\",\"type\":\"object\",\"properties\":{\"switch_id\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"}},\"required\":[\"switch_id\"]}},"
-		"{\"name\":\"send_key\",\"description\":\"Send a USB HID key press.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\"},\"combo\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}}}}"
+		"{\"name\":\"send_key\",\"description\":\"Send a USB HID key press.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\"},\"combo\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}}}},"
+		"{\"name\":\"wol_send\",\"description\":\"Send a Wake-on-LAN magic packet.\",\"inputSchema\":{\"title\":\"wol_send\",\"type\":\"object\",\"properties\":{\"mac\":{\"type\":\"string\"},\"port\":{\"type\":\"number\",\"enum\":[7,9],\"default\":9},\"broadcast_ip\":{\"type\":\"string\"}},\"required\":[\"mac\"]}},"
+		"{\"name\":\"arp_probe\",\"description\":\"Probe ARP for an IPv4 address.\",\"inputSchema\":{\"title\":\"arp_probe\",\"type\":\"object\",\"properties\":{\"ip\":{\"type\":\"string\"},\"timeout_ms\":{\"type\":\"number\",\"default\":1000}},\"required\":[\"ip\"]}},"
+		"{\"name\":\"wol_send_and_probe\",\"description\":\"Send WoL then ARP probe.\",\"inputSchema\":{\"title\":\"wol_send_and_probe\",\"type\":\"object\",\"properties\":{\"mac\":{\"type\":\"string\"},\"ip\":{\"type\":\"string\"},\"port\":{\"type\":\"number\",\"enum\":[7,9],\"default\":9},\"broadcast_ip\":{\"type\":\"string\"},\"timeout_ms\":{\"type\":\"number\",\"default\":1000}},\"required\":[\"mac\",\"ip\"]}}}"
 	"]}}";
 const char call_result[] = "{\"jsonrpc\": \"2.0\", \"result\": {\"status\": \"success\", \"content\": [%s]}, \"id\": %d}\n";
 const char invalid_params[] = "{\"jsonrpc\": \"2.0\", \"error\": {\"code\": -32602, \"message\": \"Invalid params\"}, \"id\": %d}";
@@ -509,6 +1101,115 @@ void handle_set_switch(session_info_t *info, JSON_Object *arguments, int id)
 	}
 	else {
 		response_printf(info, location_not_configured, id);
+	}
+}
+
+void handle_wol_send(session_info_t *info, JSON_Object *arguments, int id)
+{
+	if (!arguments) {
+		response_printf(info, missing_call_arguments, id);
+		return;
+	}
+
+	const char *mac = json_object_get_string(arguments, "mac");
+	const char *broadcast_ip = json_object_get_string(arguments, "broadcast_ip");
+	uint16_t port = 9;
+	char err[64] = { 0 };
+
+	if (!mac) {
+		response_printf(info, missing_call_arguments, id);
+		return;
+	}
+
+	if (!wol_get_port_from_json(arguments, &port, err, sizeof(err))) {
+		char content[128];
+		snprintf(content, sizeof(content), "{\"ok\":false,\"error\":\"%s\"}", err);
+		response_printf(info, call_result, content, id);
+		return;
+	}
+
+	if (wol_send_core(mac, broadcast_ip, port, err, sizeof(err))) {
+		response_printf(info, call_result, "{\"ok\":true}", id);
+	} else {
+		char content[128];
+		snprintf(content, sizeof(content), "{\"ok\":false,\"error\":\"%s\"}", err[0] ? err : "failed");
+		response_printf(info, call_result, content, id);
+	}
+}
+
+void handle_arp_probe(session_info_t *info, JSON_Object *arguments, int id)
+{
+	if (!arguments) {
+		response_printf(info, missing_call_arguments, id);
+		return;
+	}
+
+	const char *ip = json_object_get_string(arguments, "ip");
+	uint32_t timeout_ms = wol_get_timeout_from_json(arguments);
+	char err[64] = { 0 };
+	const char *reason = NULL;
+	bool arp_ok = false;
+
+	if (!ip) {
+		response_printf(info, missing_call_arguments, id);
+		return;
+	}
+
+	if (wol_arp_probe_core(ip, timeout_ms, &arp_ok, &reason, err, sizeof(err))) {
+		char content[160];
+		if (arp_ok) {
+			snprintf(content, sizeof(content), "{\"checked\":true,\"arp_ok\":true}");
+		} else {
+			snprintf(content, sizeof(content), "{\"checked\":true,\"arp_ok\":false,\"reason\":\"%s\"}", reason ? reason : "timeout");
+		}
+		response_printf(info, call_result, content, id);
+	} else {
+		char content[160];
+		snprintf(content, sizeof(content), "{\"checked\":false,\"arp_ok\":false,\"error\":\"%s\"}", err[0] ? err : "failed");
+		response_printf(info, call_result, content, id);
+	}
+}
+
+void handle_wol_send_and_probe(session_info_t *info, JSON_Object *arguments, int id)
+{
+	if (!arguments) {
+		response_printf(info, missing_call_arguments, id);
+		return;
+	}
+
+	const char *mac = json_object_get_string(arguments, "mac");
+	const char *ip = json_object_get_string(arguments, "ip");
+	const char *broadcast_ip = json_object_get_string(arguments, "broadcast_ip");
+	uint16_t port = 9;
+	uint32_t timeout_ms = wol_get_timeout_from_json(arguments);
+	char err[64] = { 0 };
+
+	if (!mac || !ip) {
+		response_printf(info, missing_call_arguments, id);
+		return;
+	}
+
+	if (!wol_get_port_from_json(arguments, &port, err, sizeof(err))) {
+		char content[128];
+		snprintf(content, sizeof(content), "{\"wol_sent\":false,\"error\":\"%s\"}", err);
+		response_printf(info, call_result, content, id);
+		return;
+	}
+
+	const char *reason = NULL;
+	bool arp_ok = false;
+	if (wol_send_and_probe_core(mac, ip, broadcast_ip, port, timeout_ms, &arp_ok, &reason, err, sizeof(err))) {
+		char content[180];
+		if (arp_ok) {
+			snprintf(content, sizeof(content), "{\"wol_sent\":true,\"arp_checked\":true,\"arp_ok\":true}");
+		} else {
+			snprintf(content, sizeof(content), "{\"wol_sent\":true,\"arp_checked\":true,\"arp_ok\":false,\"reason\":\"%s\"}", reason ? reason : "timeout");
+		}
+		response_printf(info, call_result, content, id);
+	} else {
+		char content[160];
+		snprintf(content, sizeof(content), "{\"wol_sent\":false,\"error\":\"%s\"}", err[0] ? err : "failed");
+		response_printf(info, call_result, content, id);
 	}
 }
 
@@ -841,6 +1542,21 @@ static int on_url_complete(llhttp_t *parser)
 	else if (strcmp(info->url, "/event") == 0) {
 		info->endpoint_type = ENDPOINT_EVENT;
 	}
+	else if (strcmp(info->url, "/wol") == 0) {
+		info->endpoint_type = ENDPOINT_WOL;
+	}
+	else if (strcmp(info->url, "/wol_allowlist.json") == 0) {
+		info->endpoint_type = ENDPOINT_WOL_ALLOWLIST;
+	}
+	else if (strcmp(info->url, "/wol/send") == 0) {
+		info->endpoint_type = ENDPOINT_WOL_SEND;
+	}
+	else if (strcmp(info->url, "/wol/probe") == 0) {
+		info->endpoint_type = ENDPOINT_WOL_PROBE;
+	}
+	else if (strcmp(info->url, "/wol/send_and_probe") == 0) {
+		info->endpoint_type = ENDPOINT_WOL_SEND_AND_PROBE;
+	}
 	else {
 		info->endpoint_type = ENDPOINT_NOT_FOUND;
 	}
@@ -915,6 +1631,39 @@ static int on_message_complete(llhttp_t *parser)
 			info->request = NULL;
 		}
 		break;
+	case ENDPOINT_WOL:
+		if (strcmp(info->method, "GET") != 0) {
+			tcp_write(info->pcb, response_405, strlen(response_405), TCP_WRITE_FLAG_COPY);
+			free(info->request);
+			info->request = NULL;
+			printf("Non-GET method not allowed for wol page\n");
+		} else {
+			tcp_write(info->pcb, file_wol_html->data, file_wol_html->len, TCP_WRITE_FLAG_COPY);
+			free(info->request);
+			info->request = NULL;
+		}
+		return 0;
+	case ENDPOINT_WOL_ALLOWLIST:
+		if (strcmp(info->method, "GET") != 0) {
+			tcp_write(info->pcb, response_405, strlen(response_405), TCP_WRITE_FLAG_COPY);
+			free(info->request);
+			info->request = NULL;
+			printf("Non-GET method not allowed for wol allowlist\n");
+		} else {
+			tcp_write(info->pcb, file_wol_allowlist_json->data, file_wol_allowlist_json->len, TCP_WRITE_FLAG_COPY);
+			free(info->request);
+			info->request = NULL;
+		}
+		return 0;
+	case ENDPOINT_WOL_SEND:
+		wol_http_send(info);
+		return 0;
+	case ENDPOINT_WOL_PROBE:
+		wol_http_probe(info);
+		return 0;
+	case ENDPOINT_WOL_SEND_AND_PROBE:
+		wol_http_send_and_probe(info);
+		return 0;
 
 	case ENDPOINT_MESSAGE:
 	case ENDPOINT_EVENT:
@@ -986,6 +1735,15 @@ static int on_message_complete(llhttp_t *parser)
 		}
 		else if (strcmp(name, "send_key") == 0) {
 			handle_send_key(info, arguments, id);
+		}
+		else if (strcmp(name, "wol_send") == 0) {
+			handle_wol_send(info, arguments, id);
+		}
+		else if (strcmp(name, "arp_probe") == 0) {
+			handle_arp_probe(info, arguments, id);
+		}
+		else if (strcmp(name, "wol_send_and_probe") == 0) {
+			handle_wol_send_and_probe(info, arguments, id);
 		}
 	}
 	else {

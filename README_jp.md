@@ -113,3 +113,17 @@ GPIO 番号 / アクティブレベル / パルス幅は `argument_definitions.h
 `on`/`off` を返します。入力 GPIO とレベル・プル設定は
 `PWR_LED_GPIO`、`PWR_LED_ACTIVE_LEVEL`、`PWR_LED_PULL`
 (0 = なし, 1 = Pull-Down, 2 = Pull-Up) を使って設定してください。
+
+## Wake on LAN (WoL)
+
+WoL magic packet and ARP probe are available over Ethernet. Use the UI via
+WireGuard (e.g. `http://10.7.0.2:3001/wol`).
+
+- Allowlist: `content/wol_allowlist.json` served by `GET /wol_allowlist.json`.
+- UI: `GET /wol` with POST endpoints:
+  - `POST /wol/send` `{ "mac": "...", "port": 7|9, "broadcast_ip": "..." }`
+  - `POST /wol/probe` `{ "ip": "...", "timeout_ms": 1000 }`
+  - `POST /wol/send_and_probe` `{ "mac": "...", "ip": "...", "port": 7|9 }`
+- MCP tools: `wol_send`, `arp_probe`, `wol_send_and_probe`
+- Rate limit: `WOL_RATE_LIMIT_MS` (default 30000 ms)
+- ARP timeout: `WOL_ARP_DEFAULT_TIMEOUT_MS` (default 1000 ms)
