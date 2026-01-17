@@ -5,14 +5,15 @@ from pathlib import Path
 import re
 
 response_types = {
-  200: "HTTP/1.0 200 OK",
-  400: "HTTP/1.0 400 Bad Request",
-  404: "HTTP/1.0 404 File not found",
-  501: "HTTP/1.0 501 Not Implemented",
+  200: "HTTP/1.1 200 OK",
+  400: "HTTP/1.1 400 Bad Request",
+  404: "HTTP/1.1 404 File not found",
+  501: "HTTP/1.1 501 Not Implemented",
 }
 
 PAYLOAD_ALIGNMENT = 4
-HTTPD_SERVER_AGENT = "lwIP/2.2.0d (http://savannah.nongnu.org/projects/lwip)"
+HTTPD_SERVER_AGENT = "llhttp/9.3 (https://github.com/nodejs/llhttp)"
+HTTPD_CONNECTION = "close"
 LWIP_HTTPD_SSI_EXTENSIONS = [".shtml", ".shtm", ".ssi"]
 
 def process_file(input_dir, file):
@@ -44,6 +45,11 @@ def process_file(input_dir, file):
     # user agent
     data = f"Server: {HTTPD_SERVER_AGENT}\r\n"
     comment = f"\"Server: {HTTPD_SERVER_AGENT}\" ({len(data)} chars)"
+    results.append({'data': bytes(data, "utf-8"), 'comment': comment});
+
+    # connection
+    data = f"Connection: {HTTPD_CONNECTION}\r\n"
+    comment = f"\"Connection: {HTTPD_CONNECTION}\" ({len(data)} chars)"
     results.append({'data': bytes(data, "utf-8"), 'comment': comment});
 
     if file.suffix not in LWIP_HTTPD_SSI_EXTENSIONS:
