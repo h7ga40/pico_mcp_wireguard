@@ -157,8 +157,9 @@ pico_add_extra_outputs(pico_mcp)
 include(gen_wireguard_artifacts.cmake)
 add_dependencies(pico_mcp wireguard_artifacts)
 
+include(makefsdata.cmake)
 pico_add_library(pico_httpd_content NOFLAG)
-pico_set_lwip_httpd_content(pico_httpd_content INTERFACE
+pico_mcp_set_lwip_httpd_content(pico_httpd_content INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/content/404.html
     ${CMAKE_CURRENT_LIST_DIR}/content/keyboard.html
     ${CMAKE_CURRENT_LIST_DIR}/content/wol.html
