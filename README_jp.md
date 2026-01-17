@@ -74,6 +74,8 @@ git clone https://github.com/h7ga40/pico_mcp_wireguard.git .
 python -m pip install pyyaml
 ```
 
+ビルドには`net_config.yaml`ファイルが必要です。使用するネットワークに応じて作成してください。
+
 Raspberry Pi Pico 拡張機能の「Compile Project」を実行すれば、ビルドできます。
 
 ## Windows PC への WireGuard 設定

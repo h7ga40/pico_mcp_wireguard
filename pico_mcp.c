@@ -104,6 +104,9 @@ typedef struct session_info {
 	struct session_info *next;      // 次のノードへのポインタ
 } session_info_t;
 
+/* Ethernet */
+struct netif g_netif;
+
 // リストの先頭ポインタ
 static session_info_t *head = NULL;
 static int response_id = 1;
@@ -324,7 +327,7 @@ static bool wol_send_magic_packet(const uint8_t mac[6], const ip_addr_t *dst_ip,
 	struct udp_pcb *pcb = udp_new();
 	if (!pcb) return false;
 
-	udp_set_flags(pcb, UDP_FLAGS_BROADCAST);
+	udp_set_flags(pcb, SOF_BROADCAST);
 
 	struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, WOL_MAGIC_PACKET_LEN, PBUF_RAM);
 	if (!p) {
@@ -1797,9 +1800,6 @@ static ip_addr_t g_ip;
 static ip_addr_t g_mask;
 static ip_addr_t g_gateway;
 static ip_addr_t g_dnsserver;
-
-/* LWIP */
-struct netif g_netif;
 
 int loop()
 {
