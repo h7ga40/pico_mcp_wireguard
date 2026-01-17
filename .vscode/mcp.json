@@ -2,7 +2,7 @@
     "servers": {
     "Pico": {
       "type": "sse",
-      "url": "http://192.168.3.46:3001/sse"
+      "url": "http://10.7.0.2:3001/sse"
     }
   }
 }
