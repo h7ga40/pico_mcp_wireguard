@@ -9,3 +9,4 @@ wg0.conf
 argument_definitions.h
 argument_definitions.h.bak
 net_config.yaml
+content/wol_allowlist.json
