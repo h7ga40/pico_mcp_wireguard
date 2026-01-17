@@ -348,6 +348,34 @@ static bool wol_send_magic_packet(const uint8_t mac[6], const ip_addr_t *dst_ip,
 	return (err == ERR_OK);
 }
 
+static bool wol_send_magic_packet_2(const uint8_t mac[6])
+{
+	if (!g_netif.linkoutput) return false;
+
+	uint8_t frame[14 + WOL_MAGIC_PACKET_LEN];
+	uint8_t *payload = frame + 14;
+	uint8_t dest_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+	memcpy(frame, dest_mac, 6);
+	memcpy(frame + 6, g_netif.hwaddr, 6);
+	frame[12] = 0x08; // EtherType 0x0842 (Wake-on-LAN)
+	frame[13] = 0x42;
+
+	memset(payload, 0xFF, 6);
+	for (int i = 0; i < 16; i++) {
+		memcpy(payload + 6 + (i * 6), mac, 6);
+	}
+
+	struct pbuf *p = pbuf_alloc(PBUF_RAW, sizeof(frame), PBUF_RAM);
+	if (!p) return false;
+
+	pbuf_take(p, frame, sizeof(frame));
+	err_t err = g_netif.linkoutput(&g_netif, p);
+	pbuf_free(p);
+
+	return (err == ERR_OK);
+}
+
 static bool wol_arp_probe_internal(const ip_addr_t *ip, uint32_t timeout_ms, const char **reason_out)
 {
 	if (!netif_is_up(&g_netif) || !netif_is_link_up(&g_netif)) {
@@ -513,7 +541,7 @@ static bool wol_get_port_from_json(JSON_Object *obj, uint16_t *port_out, char *e
 	uint16_t port = 9;
 	if (json_object_has_value_of_type(obj, "port", JSONNumber)) {
 		double p = json_object_get_number(obj, "port");
-		if (p != 7 && p != 9) {
+		if (p != 0 && p != 7 && p != 9) {
 			snprintf(err, err_len, "invalid port");
 			return false;
 		}
@@ -536,7 +564,7 @@ static uint32_t wol_get_timeout_from_json(JSON_Object *obj)
 
 static bool wol_send_core(const char *mac_str, const char *broadcast_ip_str, uint16_t port, char *err, size_t err_len)
 {
-	if (port != 7 && port != 9) {
+	if (port != 0 && port != 7 && port != 9) {
 		snprintf(err, err_len, "invalid port");
 		return false;
 	}
@@ -557,19 +585,27 @@ static bool wol_send_core(const char *mac_str, const char *broadcast_ip_str, uin
 		return false;
 	}
 
-	ip_addr_t dst_ip;
-	if (broadcast_ip_str && broadcast_ip_str[0] != '\0') {
-		if (!ipaddr_aton(broadcast_ip_str, &dst_ip)) {
-			snprintf(err, err_len, "invalid broadcast ip");
+	if (port == 0) {
+		if (!wol_send_magic_packet_2(mac)) {
+			snprintf(err, err_len, "send failed");
 			return false;
 		}
-	} else {
-		wol_default_broadcast_ip(&dst_ip);
 	}
-
-	if (!wol_send_magic_packet(mac, &dst_ip, port)) {
-		snprintf(err, err_len, "send failed");
-		return false;
+	else {
+		ip_addr_t dst_ip;
+		if (broadcast_ip_str && broadcast_ip_str[0] != '\0') {
+			if (!ipaddr_aton(broadcast_ip_str, &dst_ip)) {
+				snprintf(err, err_len, "invalid broadcast ip");
+				return false;
+			}
+		} else {
+			wol_default_broadcast_ip(&dst_ip);
+		}
+	
+		if (!wol_send_magic_packet(mac, &dst_ip, port)) {
+			snprintf(err, err_len, "send failed");
+			return false;
+		}
 	}
 
 	wol_mark_sent();
