@@ -46,7 +46,7 @@ network:
       peers:
         - allowed-ips: [ 10.7.0.1/24 ]
           endpoint: 0.0.0.0:0
-          keepalive: 0
+          keepalive: 1
       mtu: 1420
       listen-port: 51820
 ```
@@ -139,3 +139,13 @@ WoLマジックパケットとARPプローブはイーサネット経由で利�
 - MCPツール: `wol_send`, `arp_probe`, `wol_send_and_probe`
 - レート制限: `WOL_RATE_LIMIT_MS` (デフォルト 30000 ms)
 - ARPタイムアウト: `WOL_ARP_DEFAULT_TIMEOUT_MS` (デフォルト 1000 ms)
+
+## インターネット経由で使う場合のネットワーク設定
+
+![インターネット経由](OverInternet.drawio.svg)
+
+WireGuardeクライアントの`Peer`の`Endpoint`を、Picoを設置する側のグローバルIPアドレスにします。
+
+Picoを設置する側のルーターにWireGuardeのUDPポート番号(51820)をPicoのIPアドレスに転送する設定をします。
+
+PCのファイアーウォール設定で、WireGuardeクライアントがUDP受信出来るようにします。
