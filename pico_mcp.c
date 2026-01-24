@@ -1805,7 +1805,7 @@ void connect_wireguard() {
 	ipaddr_aton(TO_STRING(WG_GATEWAY_IP), &gateway);
 
 	wg.private_key = TO_STRING(WG_PRIVATE_KEY);
-	wg.listen_port = 51820;
+	wg.listen_port = WG_LISTEN_PORT;
 	wg.bind_netif = NULL;
 
 	wg_netif = netif_add(&wg_netif_struct, &ipaddr, &netmask, &gateway, &wg,

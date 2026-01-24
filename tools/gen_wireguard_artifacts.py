@@ -206,17 +206,21 @@ def write_wg0_conf(
     pc_tunnel_ip: str,
     pico_lan_ip: str,
     pico_listen_port: int,
+    mtu: int,
     allowed_ips: str,
 ) -> None:
     conf = (
         "[Interface]\n"
         f"PrivateKey = {pc.private_key_b64}\n"
         f"Address = {pc_tunnel_ip}/32\n"
+        f"ListenPort = {pico_listen_port}\n"
+        f"MTU = {mtu}\n"
         "\n"
         "[Peer]\n"
         f"PublicKey = {pico.public_key_b64}\n"
         f"AllowedIPs = {allowed_ips}\n"
         f"Endpoint = {pico_lan_ip}:{pico_listen_port}\n"
+        f"PersistentKeepalive = 25\n"
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(conf, encoding="utf-8")
@@ -299,6 +303,16 @@ def parse_endpoint(value: Any, label: str) -> Tuple[str, int]:
 
 
 def parse_keepalive(value: Any, label: str) -> int:
+    if isinstance(value, bool) or value is None:
+        raise RuntimeError(f"{label} must be an integer.")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    raise RuntimeError(f"{label} must be an integer.")
+
+
+def parse_int(value: Any, label: str) -> int:
     if isinstance(value, bool) or value is None:
         raise RuntimeError(f"{label} must be an integer.")
     if isinstance(value, int):
@@ -423,14 +437,16 @@ def extract_net_config(
     listen_port = wg.get("listen-port")
     if listen_port is None:
         raise RuntimeError("network.tunnels.wg.listen-port is required.")
-    if isinstance(listen_port, bool):
-        raise RuntimeError("network.tunnels.wg.listen-port must be an integer.")
-    try:
-        listen_port_int = int(listen_port)
-    except ValueError as e:
-        raise RuntimeError("network.tunnels.wg.listen-port must be an integer.") from e
+    listen_port_int = parse_int(listen_port, "network.tunnels.wg.listen-port")
     if not (0 <= listen_port_int <= 65535):
         raise RuntimeError("network.tunnels.wg.listen-port must be between 0 and 65535.")
+
+    mtu = wg.get("mtu")
+    if mtu is None:
+        raise RuntimeError("network.tunnels.wg.mtu is required.")
+    mtu_int = parse_int(mtu, "network.tunnels.wg.mtu")
+    if not (576 <= mtu_int <= 65535):
+        raise RuntimeError("network.tunnels.wg.mtu must be between 576 and 65535.")
 
     return {
         "wifi_ssid": wifi_ssid,
@@ -449,6 +465,7 @@ def extract_net_config(
         "wg_endpoint_ip": endpoint_host,
         "wg_endpoint_port": endpoint_port,
         "wg_listen_port": listen_port_int,
+        "wg_mtu": mtu_int,
     }
 
 
@@ -508,6 +525,8 @@ def main() -> int:
         "WG_ALLOWED_IP_MASK_IP": (net_config["wg_allowed_mask"], True),
         "WG_ENDPOINT_IP": (net_config["wg_endpoint_ip"], True),
         "WG_ENDPOINT_PORT": (str(net_config["wg_endpoint_port"]), False),
+        "WG_LISTEN_PORT": (str(net_config["wg_listen_port"]), False),
+        "WG_MTU": (str(net_config["wg_mtu"]), False),
     }
 
     patch_defines_with_continuations(
@@ -525,6 +544,7 @@ def main() -> int:
         pc_tunnel_ip=net_config["wg_allowed_ip"],
         pico_lan_ip=net_config["endpoint_ip"],
         pico_listen_port=net_config["wg_listen_port"],
+        mtu=net_config["wg_mtu"],
         allowed_ips=f"{net_config['wg_address']}/32",
     )
 

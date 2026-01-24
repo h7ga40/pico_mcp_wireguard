@@ -66,6 +66,14 @@
 #define WG_ENDPOINT_PORT
 #endif
 
+#ifndef WG_LISTEN_PORT
+#define WG_LISTEN_PORT
+#endif
+
+#ifndef WG_MTU
+#define WG_MTU
+#endif
+
 #ifndef TARGET_MAC
 #define TARGET_MAC
 #endif
