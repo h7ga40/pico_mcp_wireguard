@@ -89,6 +89,48 @@ python -m pip install pyyaml
 
 Raspberry Pi Pico 拡張機能の「Compile Project」を実行すれば、ビルドできます。
 
+## ローカルネットワークで使う場合のWireGuard設定
+
+ビルドすると下記のような`wg0.conf`ファイルが出力されます。
+
+```ini
+[Interface]
+PrivateKey = <pc.key>
+Address = 10.7.0.1/32
+ListenPort = 51820
+MTU = 1420
+
+[Peer]
+PublicKey = <pico.pub>
+AllowedIPs = 10.7.0.2/32
+Endpoint = 192.168.1.50:51820
+PersistentKeepalive = 25
+```
+
+## インターネット経由で使う場合のネットワーク設定
+
+![インターネット経由](OverInternet.drawio.svg)
+
+`wg0.conf`ファイルの`Peer`の`Endpoint`を、Picoを設置する側のグローバルIPアドレスにします。
+
+```ini
+[Interface]
+PrivateKey = <pc.key>
+Address = 10.7.0.1/32
+ListenPort = 51820
+MTU = 1420
+
+[Peer]
+PublicKey = <pico.pub>
+AllowedIPs = 10.7.0.2/32
+Endpoint = <グローバルIPアドレス>:51820
+PersistentKeepalive = 25
+```
+
+Picoを設置する側のルーターにWireGuardeのUDPポート番号(51820)をPicoのIPアドレスに転送する設定をします。
+
+PCのファイアーウォール設定で、WireGuardeクライアントがUDP受信出来るようにします。
+
 ## Windows PC への WireGuard 設定
 
 次のサイトから Windows 番 WireGuard をダウンロードして、インストールします。
@@ -139,13 +181,3 @@ WoLマジックパケットとARPプローブはイーサネット経由で利�
 - MCPツール: `wol_send`, `arp_probe`, `wol_send_and_probe`
 - レート制限: `WOL_RATE_LIMIT_MS` (デフォルト 30000 ms)
 - ARPタイムアウト: `WOL_ARP_DEFAULT_TIMEOUT_MS` (デフォルト 1000 ms)
-
-## インターネット経由で使う場合のネットワーク設定
-
-![インターネット経由](OverInternet.drawio.svg)
-
-WireGuardeクライアントの`Peer`の`Endpoint`を、Picoを設置する側のグローバルIPアドレスにします。
-
-Picoを設置する側のルーターにWireGuardeのUDPポート番号(51820)をPicoのIPアドレスに転送する設定をします。
-
-PCのファイアーウォール設定で、WireGuardeクライアントがUDP受信出来るようにします。
