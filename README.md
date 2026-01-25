@@ -1,51 +1,30 @@
-# Remote keyboard for W55RP20-EVB-Pico with WireGuard and MCP Server
+﻿# W55RP20-EVB-Pico WireGuard and MCP Server *Remote Keyboard*
 
-## About the “W55RP20-EVB-Pico”
+![Overview](Overview.png)
 
-This is an evaluation board enabling Ethernet connectivity by combining the Raspberry Pi Pico's RP2040 CPU with the W5500, which features hardware TCP/IP.
+W55RP20-EVB-Pico is an evaluation board based on Wiznet's SoC, the W55RP20. The W55RP20 integrates the RP2040 (used in the Raspberry Pi Pico), an Ethernet controller, and a hardware TCP/IP stack in a single SoC. It can be developed with the Pico SDK, and this project uses the SDK to implement a USB keyboard.
 
 <https://docs.wiznet.io/Product/Chip/MCU/W55RP20/w55rp20-evb-pico>
 
-## Overview
+WireGuard is a VPN protocol/software known for being simple, fast, and secure. It is used for the network side of the remote keyboard communication.
 
-```less
-[ Linux / Windows PC ]
-   WireGuard Client
-   Tunnel IP: 10.7.0.1
-        |
-        |  (WireGuard over UDP, LAN)
-        |
-[ Raspberry Pi Pico ]
-   wireguard-lwip
-   Tunnel IP: 10.7.0.2
-   listen_port: 51820
-```
+<https://github.com/Mr-Pine/pi-pico-wireguard-lwip>
 
-The Pico exposes its LAN interface at `192.168.1.50/24` (gateway `192.168.1.1`) and
-runs the HTTP/MCP server on port `3001`. Access the control page locally at
-`http://192.168.1.50:3001` or through the WireGuard tunnel at
-`http://10.7.0.2:3001`.
+An MCP server is a server that implements the Model Context Protocol, a standard that lets AI (large language models) integrate with external systems and data. This project uses it to receive key input from the remote keyboard. If you register the MCP server in GitHub Copilot (etc.), you should also be able to control it from chat.
 
-## WireGuard Configuration (Windows)
+<https://github.com/h7ga40/pico_mcp>
 
-Install WireGuard for Windows from <https://www.wireguard.com/install/>.
+By accessing the remote keyboard URL from a web browser and using the web-based software keyboard, you can send key input through the USB keyboard interface. A power key is also implemented, so it should be possible to power on the PC (though it did not work on my test PC).
 
-### Generate artifacts (net_config.yaml)
+## Network configuration
 
-The `tools/gen_wireguard_artifacts.py` script requires PyYAML to read `net_config.yaml`.
-Install it before running the script:
-
-```bash
-python -m pip install pyyaml
-```
-
-Example of `net_config.yaml`
+For Pico-side networking, prepare a file named `net_config.yaml` and write it as shown below. At build time, `argument_definitions.h` is generated and the parameters are set. A PC configuration file `wg0.conf` is also generated; load it into WireGuard to create the tunnel.
 
 ```yaml
 network:
   ethernets:
     e0:
-      dhcp4: true
+      dhcp4: false
       addresses: [ 192.168.1.50/24 ]
       gateway4: 192.168.1.1
       nameservers:
@@ -66,201 +45,140 @@ network:
       peers:
         - allowed-ips: [ 10.7.0.1/24 ]
           endpoint: 0.0.0.0:0
-          keepalive: 0
+          keepalive: 1
       mtu: 1420
       listen-port: 51820
 ```
 
-### Generate the Pico keys
+W55RP20-EVB-Pico only supports Ethernet, so use the `ethernets` settings. `wifis` is provided for Pico W.
+Use `tunnels` for WireGuard settings.
 
-Run in PowerShell:
+At build time, files containing key material are generated: `pc.key`, `pc.pub`, `pico.key`, and `pico.pub`. They are not deleted even on a clean, so if you want new keys, delete those four files.
 
-```PowerShell
-wg.exe genkey | Tee-Object pico.key | wg.exe pubkey > pico.pub
+## Wake on LAN (WoL) allowlist
+
+For security, WoL limits the destinations. Prepare a list in `content/wol_allowlist.json` as shown below.
+
+```json
+[
+  { "name": "MyPC", "mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.11.10" },
+  { "name": "NAS", "mac": "11:22:33:44:55:66", "ip": "192.168.11.20" }
+]
 ```
 
-### Configure Windows
+## Build
 
-1. Launch WireGuard.
-2. Choose **Add Tunnel** → **Add empty tunnel**.
-3. A key pair is generated automatically; use those values for the PC peer.
+Build using the Raspberry Pi Pico extension for Visual Studio Code.
 
-Treat the generated public key as `<pc.pub>` and the private key as `<pc.key>`,
-then update the tunnel configuration:
+Open a folder in a command prompt or shell and download the code.
+
+```bash
+git clone https://github.com/h7ga40/pico_mcp_wireguard.git .
+```
+
+Open this folder in Visual Studio Code. The Raspberry Pi Pico extension will install the toolchain and related components. The SDK download can take some time, so wait until it completes.
+
+Python is used to process the network configuration, so please install it. You also need the `pyyaml` module to handle YAML files; install it with:
+
+```bash
+python -m pip install pyyaml
+```
+
+Building requires `net_config.yaml` and `content/wol_allowlist.json`. Create them for your network.
+
+Run "Compile Project" in the Raspberry Pi Pico extension to build.
+
+## WireGuard configuration for local networks
+
+![Local network](LocalNetwork.drawio.svg)
+
+After building, a `wg0.conf` file like the following is generated.
 
 ```ini
 [Interface]
 PrivateKey = <pc.key>
-Address    = 10.7.0.1/32
+Address = 10.7.0.1/32
+ListenPort = 51820
+MTU = 1420
+
 [Peer]
-PublicKey  = <pico.pub>
+PublicKey = <pico.pub>
 AllowedIPs = 10.7.0.2/32
-Endpoint   = 192.168.1.50:51820
+Endpoint = 192.168.1.50:51820
+PersistentKeepalive = 25
 ```
 
-### Update the Pico firmware configuration
+## Network configuration for use over the Internet
 
-Edit `argument_definitions.h` and set the macros as follows:
+![Over the Internet](OverInternet.drawio.svg)
 
-| Macro | Value | Notes |
-| - | - | - |
-| WG_PRIVATE_KEY | `<pico.key>` | Pico private key |
-| WG_ADDRESS | `10.7.0.2` | Pico IP address |
-| WG_SUBNET_MASK_IP | `255.255.255.0` | Pico subnet |
-| WG_GATEWAY_IP | `0.0.0.0` | Pico gateway address |
-| WG_PUBLIC_KEY | `<pc.pub>` | PC public key |
-| WG_ALLOWED_IP | `0.0.0.0` | Allow all IPs through tunnel |
-| WG_ALLOWED_IP_MASK_IP | `0.0.0.0` | Allow all IPs through tunnel |
-| WG_ENDPOINT_IP | `0.0.0.0` | Leave as `0.0.0.0` when the PC initiates the tunnel |
-| WG_ENDPOINT_PORT | `0` | Leave as `0` when the PC initiates the tunnel |
+Set the `Endpoint` under `Peer` in `wg0.conf` to the public IP address of the network where the Pico is installed.
 
-## WireGuard Configuration (Linux)
+```ini
+[Interface]
+PrivateKey = <pc.key>
+Address = 10.7.0.1/32
+ListenPort = 51820
+MTU = 1420
 
-The steps below use the `wg-quick` helper on Debian/Ubuntu-style systems. Adapt
-package names and service managers as needed for other distributions.
-
-1. Install WireGuard utilities.
-
-   ```bash
-   sudo apt update
-   sudo apt install wireguard wireguard-tools
-   ```
-
-2. Generate key pairs.
-
-   ```bash
-   # Pico key pair (copy `pico.key` and `pico.pub` into your firmware settings)
-   wg genkey | tee pico.key | wg pubkey > pico.pub
-
-   # Linux client key pair
-   wg genkey | tee pc.key | wg pubkey > pc.pub
-   ```
-
-3. Create `/etc/wireguard/wg0.conf` with the following template, replacing
-   the placeholder values to match your network and the Pico firmware values
-   in `argument_definitions.h`:
-
-   ```ini
-   [Interface]
-   PrivateKey = <pc.key>
-   Address    = 10.7.0.1/32
-
-   [Peer]
-   PublicKey  = <pico.pub>
-   AllowedIPs = 10.7.0.2/32
-   Endpoint   = 192.168.1.50:51820
-   ```
-
-4. Bring up the interface and enable it on boot:
-
-   ```bash
-   sudo wg-quick up wg0
-   sudo systemctl enable wg-quick@wg0
-   ```
-
-Use `sudo wg` to verify that the tunnel is established and exchanging
-handshakes.
-
-## ATX Power Switch Pulse via JSON-RPC
-
-The firmware exposes JSON-RPC tools that can be invoked using the `tools/call`
-method. Use `tools/list` to discover available tools: `set_location`,
-`set_switch_id`, and `set_switch`. These allow you to configure the target
-switch and trigger a momentary ATX power switch pulse.
-
-Example requests:
-
-```json
-{ "jsonrpc": "2.0", "method": "tools/call",
-  "params": { "name": "set_location", "arguments": { "location": "office" } },
-  "id": 1 }
+[Peer]
+PublicKey = <pico.pub>
+AllowedIPs = 10.7.0.2/32
+Endpoint = <public IP address>:51820
+PersistentKeepalive = 25
 ```
 
-```json
-{ "jsonrpc": "2.0", "method": "tools/call",
-  "params": { "name": "set_switch_id", "arguments": { "switch_id": "led" } },
-  "id": 2 }
+Configure the router on the Pico side to forward WireGuard's UDP port (51820) to the Pico's IP address.
+
+Configure the PC firewall so the WireGuard client can receive UDP packets.
+
+## WireGuard setup on Windows PC
+
+Download and install WireGuard for Windows from:
+<https://www.wireguard.com/install/>
+
+After installation, start WireGuard, choose "Import tunnel(s) from file," and select the `wg0.conf` file generated at build time.
+
+Click "Activate" to create the tunnel.
+
+## WireGuard setup on Ubuntu PC
+
+Install WireGuard.
+
+```bash
+sudo apt update
+sudo apt install wireguard wireguard-tools
 ```
 
-```json
-{ "jsonrpc": "2.0", "method": "tools/call",
-  "params": { "name": "set_switch", "arguments": { "state": "on" } },
-  "id": 3 }
+Copy the generated `wg0.conf` to `/etc/wireguard/wg0.conf`.
+
+Enable it with:
+
+```bash
+sudo wg-quick up wg0
+sudo systemctl enable wg-quick@wg0
 ```
 
-Call `set_switch` with `"state": "on"` or `"off"`. The value is accepted for
-compatibility but ignored; each call emits a single GPIO pulse (default 200 ms).
-The request only triggers when the `location` or `switch_id` matches the
-previously set values, or when both fields are omitted.
+## ATX power switch / power LED
 
-Configure the GPIO, active level, and pulse width in `argument_definitions.h`
-via `ATX_PWR_GPIO`, `ATX_PWR_ACTIVE_LEVEL`, and `ATX_PWR_PULSE_MS`. For safety,
-use a transistor/photocoupler to isolate the Pico from the ATX PWR_SW header.
+`set_switch` outputs a one-shot pulse corresponding to the ATX PWR_SW signal.
+The GPIO number, active level, and pulse width can be changed in `argument_definitions.h`:
+`ATX_PWR_GPIO`, `ATX_PWR_ACTIVE_LEVEL`, `ATX_PWR_PULSE_MS`.
 
-`get_switch_state()` now reports the motherboard power LED state by reading an
-input GPIO. Configure it with `PWR_LED_GPIO`, `PWR_LED_ACTIVE_LEVEL`, and
-`PWR_LED_PULL` (0 = none, 1 = pull-down, 2 = pull-up).
+`get_switch_state()` reads the motherboard power LED pin and returns `on`/`off`.
+Configure the input GPIO, active level, and pull setting with:
+`PWR_LED_GPIO`, `PWR_LED_ACTIVE_LEVEL`, `PWR_LED_PULL`
+(0 = none, 1 = pull-down, 2 = pull-up).
 
 ## Wake on LAN (WoL)
 
-The firmware can send Wake-on-LAN magic packets over the Ethernet interface and
-optionally probe ARP to confirm reachability. The WoL UI is intended to be used
-through the WireGuard tunnel (e.g. `http://10.7.0.2:3001/wol`).
+WoL magic packets and ARP probes are available over Ethernet. Use the UI over WireGuard (for example: `http://10.7.0.2:3001/wol`).
 
-- Allowlist lives in `content/wol_allowlist.json` and is served at
-  `GET /wol_allowlist.json`. Only allowlisted MAC/IP pairs are accepted.
-- Web UI: `GET /wol` with POST endpoints:
+- Allowlist: `content/wol_allowlist.json` served by `GET /wol_allowlist.json`.
+- UI: `GET /wol` and POST endpoints:
   - `POST /wol/send` `{ "mac": "...", "port": 7|9, "broadcast_ip": "..." }`
   - `POST /wol/probe` `{ "ip": "...", "timeout_ms": 1000 }`
   - `POST /wol/send_and_probe` `{ "mac": "...", "ip": "...", "port": 7|9 }`
-- MCP tools: `wol_send`, `arp_probe`, and `wol_send_and_probe`.
-- Rate limiting is enabled (default 30s). Adjust with `WOL_RATE_LIMIT_MS`.
-- Default ARP probe timeout is `WOL_ARP_DEFAULT_TIMEOUT_MS` (ms).
-
-## How it works
-
-Use the agent mode of GitHub Copilot Chat in Visual Studio Code.
-
-https://github.com/user-attachments/assets/7c040786-b527-4f8a-829e-545591232b0f
-
-## Installing the pico-sdk
-
-The following steps summarize the pico-sdk setup:
-
-1. Create a working directory.
-
-   ```bash
-   mkdir -p ~/.pico-sdk/sdk
-   ```
-
-2. Download release 2.2.0 from the official Raspberry Pi repository.
-
-   ```bash
-   cd ~/.pico-sdk/sdk
-   git clone -b 2.2.0 https://github.com/raspberrypi/pico-sdk.git 2.2.0
-   cd 2.2.0
-   git submodule update --init
-   ```
-
-3. Set the `PICO_SDK_PATH` environment variable.
-
-   ```bash
-   export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.2.0
-   ```
-
-After verifying that the repository was cloned and its submodules were checked
-out, the pico-sdk will be available under `~/.pico-sdk/sdk/2.2.0`.
-
-## Build Instructions
-
-The commands below automatically fetch the Pico SDK and build the project.
-
-```bash
-mkdir build
-cd build
-cmake -E env PICO_SDK_FETCH_FROM_GIT=1 cmake ..
-make -j$(nproc)
-```
-
-When the build succeeds, artifacts such as `pico_mcp.uf2` are generated in the
-`build` directory.
+- MCP tools: `wol_send`, `arp_probe`, `wol_send_and_probe`
+- Rate limit: `WOL_RATE_LIMIT_MS` (default 30000 ms)
+- ARP timeout: `WOL_ARP_DEFAULT_TIMEOUT_MS` (default 1000 ms)
