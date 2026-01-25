@@ -1,5 +1,7 @@
 # W55RP20-EVB-Pico で作る Wireguard と MCP サーバー を使った*リモートキーボード*
 
+![概念図](Overview.png)
+
 W55RP20-EVB-Pico は Wiznet 社の SoC、W55RP20 を搭載した評価ボードです。W55RP20 は、Raspberry Pi Pico に搭載されるチップ RP2040 と Ethernet コントローラ、ハードウェア TCP/IP スタックが一体になったSoCで、Pico SDK を使用した開発ができ、SDK を使用して USB キーボードを実装しています。
 
 <https://docs.wiznet.io/Product/Chip/MCU/W55RP20/w55rp20-evb-pico>
@@ -14,8 +16,6 @@ MCP サーバーを Github Copilot などに登録すれば、チェットから
 <https://github.com/h7ga40/pico_mcp>
 
 Web ブラウザからリモートキーボードの URL にアクセスして、Web ページのソフトウェアキーボードを操作することで、USB キーボードからキー入力することができます。電源キーを実装したので、PC の電源も入れられるハズです。（手元の PC では失敗…）
-
-![概念図](Overview.drawio.svg)
 
 ## ネットワーク設定
 
@@ -90,6 +90,8 @@ python -m pip install pyyaml
 Raspberry Pi Pico 拡張機能の「Compile Project」を実行すれば、ビルドできます。
 
 ## ローカルネットワークで使う場合のWireGuard設定
+
+![ローカルネットワーク](LocalNetwork.drawio.svg)
 
 ビルドすると下記のような`wg0.conf`ファイルが出力されます。
 
